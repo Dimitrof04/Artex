@@ -1,0 +1,20 @@
+# Próprio do CLion e JetBrains
+.idea/
+*.iws
+*.iml
+
+# Pastas de Build do CMake
+cmake-build-debug/
+cmake-build-release/
+build/
+include/
+
+# Arquivos de log e cache
+*.log
+.cmake/
+
+# Bloquear executáveis gerados compilados no Linux
+*.out
+*.o
+*.a
+*.so
