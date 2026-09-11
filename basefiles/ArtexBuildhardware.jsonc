@@ -1,24 +1,12 @@
-// path : /etc/artex/artexbuild
-// use sudo or enter wifh root user
 {
-    "imports": ["ArtexBuildhardware.jsonc"],
-
-    "hostname": "Artexroot", // your hostname
-    "users": [
-        "root",
-        "lulu"
-    ],
+    "services": {
+        "pipewere": true,
+        "pulseaudio": false,
+        "bluetooth": true,
+        "print": false
+    },
     "packages": [ // install packages use yay
-        // name packages from aur
-    ],
-    "configs":{
-        "users":{
-            "*" : { // for all ussers
-                ".config": true,
-                ".local": false
-            }
-        },
-        "packages": true,
-        "limitepackages": 5 // limit snapshots | use -1 for unlimited snapshots 
-    }
+        "git", // need for save versions
+        "firefox" // firefox :3
+    ]
 }

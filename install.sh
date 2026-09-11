@@ -11,18 +11,21 @@ sudo mkdir localsaves
 sudo mkdir lastBackup
 sudo touch versions.txt
 
-cd /artex/gitsave
+cd gitsave
+mkdir config
 
 sudo git init
 sudo git config --global user.email "ArtexRecoveryautogit@gmail.com"
 sudo git config --global user.name "ArtexRecoveryautogit"
 
-sudo cp ~/artexrecovery/basefiles/* /artex/localfiles
+sudo cp ~/ArtexRecovery/basefiles/* /artex/localfiles
 
-cd ~/artexrecovery
+cd ~/ArtexRecovery
 
 mkdir -p include/nlohmann
 curl -L https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp -o include/nlohmann/json.hpp
 
 g++ -std=c++17 main.cpp -I include -o ArtexRecovery
-sudo ln -s ~/artexrecovery/ArtexRecovery /usr/local/bin/ArtexRecovery
+mv ArtexRecovery /artex/ArtexRecovery
+
+sudo ln ~/ArtexRecovery/ArtexRecovery /usr/local/bin/ArtexRecovery

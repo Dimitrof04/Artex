@@ -1,12 +1,46 @@
+// use sudo or enter wifh root user
 {
-    "services": {
-        "pipewere": true,
-        "pulseaudio": false,
-        "bluetooth": true,
-        "print": false
-    },
+    "imports": ["ArtexBuildhardware.jsonc"],
+
+    //"hostname": "Artexroot", // your hostname
+    //"users": [], // your users
     "packages": [ // install packages use yay
-        "git", // need for save versions
-        "firefox" // firefox :3
-    ]
+        // name packages from aur
+    ],
+    "flatpak": [ // flatpaks
+
+    ],
+    "configs":{
+        "users":{
+            "*" : { // for all ussers
+                ".config": true,
+                ".local": false
+            }
+        },
+        "packages": true,
+        "limitepackages": 5 // limit snapshots | use -1 for unlimited snapshots
+    }
+}
+
+namespace ArtexTokens {
+    const std::string FOLDER = "D";
+    const std::string FILE = "F";
+    const std::string VAR = "V";
+    const std::string VAR_INT = "VI";
+    const std::string VAR_FLOAT = "VF";
+    const std::string VAR_DOUBLE = "VD";
+    const std::string VAR_STRING = "VS";
+    const std::string VAR_GLOBAL = "VG";
+    const std::string CLASS = "CC";
+    const std::string PUBLIC = "CP";
+    const std::string PRIVATE = "CI";
+    const std::string FOR = "FF";
+    const std::string WHILE = "FW";
+    const std::string CASE = "FC";
+    const std::string IF = "FI";
+    const std::string ELSE = "FE";
+    const std::string RETURN = "RE";
+    const std::string THEN = "TH";
+    const std::string Const = "TC";
+    const std::string Main = "TM";
 }

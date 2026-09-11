@@ -9,19 +9,551 @@
 #include <unistd.h>
 #include <cstdio>
 #include <nlohmann/json.hpp>
+#include <memory>
+#include <algorithm>
+#include <set>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
 
+// =====================================
+// Artex Builder                       |
+// =====================================
+
+class ArtexToken {
+private:
+    std::string command; // Ex: "class ", "int "
+    std::string ArtexFormation; // Ex: "CC", "VI"
+
+public:
+    ArtexToken(std::string command, std::string ArtexFormation) : command(command), ArtexFormation(ArtexFormation) {
+    }
+
+    // Getters: permitem ler os dados privados
+    std::string getCommand() const { return command; }
+    std::string getFormation() const { return ArtexFormation; }
+};
+
+// Tabela única centralizada de Tokens
+inline const std::vector<ArtexToken> artexTokens = {
+    // artex
+    {"FOLDER", "D"},
+    {"FILE", "F"},
+    // global
+    {"class ", "CC"},
+    {"public:", "CP"},
+    {"private:", "CI"},
+    {"self", "Cs"},
+    {"this", "Ct"},
+    {"int ", "VI"},
+    {"float ", "VF"},
+    {"double ", "VD"},
+    {"string ", "VS"},
+    {"return ", "RE"},
+    {"for ", "FF"},
+    {"while ", "FW"},
+    {"case ", "FC"},
+    {"if ", "FI"},
+    {"else", "FE"},
+    {"then", "TH"},
+    {"const", "TC"},
+    {"static", "TS"},
+    {"main", "TM"},
+    {"void", "TV"},
+    {"from", "TF"},
+    {"import", "TI"},
+    // lua
+    {"local", "Ll"},
+    {"fuction", "Lf"},
+    {"require", "Lr"},
+    // cpp / c#
+    {"#include", "CpI"},
+    {"using", "CpU"},
+    {"inline", "CpI"},
+    {"printf", "CpP"},
+    {"namespace", "CpN"},
+    {"std::", "Cps"},
+    // linux
+    {"sudo", "Ls"},
+    {"mkdir", "Lm"},
+    {"touch", "Lt"},
+    // arch
+    {"pacman", "LAp"}
+};
+
+// Função auxiliar para buscar a formação de um token por nome (ex: "FOLDER" -> "D")
+inline std::string getTokenFormation(const std::string &name) {
+    for (const auto &token: artexTokens) {
+        if (token.getCommand() == name) {
+            return token.getFormation();
+        }
+    }
+    return "";
+}
+
+static const std::string base64_chars =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "abcdefghijklmnopqrstuvwxyz"
+        "0123456789+/";
+
+std::string base64_encode(const std::string &in) {
+    std::string out;
+    int val = 0, valb = -6;
+    for (unsigned char c: in) {
+        val = (val << 8) + c;
+        valb += 8;
+        while (valb >= 0) {
+            out.push_back(base64_chars[(val >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+    if (valb > -6) out.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
+    while (out.size() % 4) out.push_back('=');
+    return out;
+}
+
+std::string base64_decode(const std::string &in) {
+    std::string out;
+    std::vector<int> T(256, -1);
+    for (int i = 0; i < 64; i++) T[base64_chars[i]] = i;
+
+    int val = 0, valb = -8;
+    for (unsigned char c: in) {
+        if (T[c] == -1) break;
+        val = (val << 8) + T[c];
+        valb += 6;
+        if (valb >= 0) {
+            out.push_back(char((val >> valb) & 0xFF));
+            valb -= 8;
+        }
+    }
+    return out;
+}
+
+// Helper para gerenciar Escape de caracteres
+// System Escaper
+class ArtexEscaper {
+public:
+    static std::string encodeContent(const std::string &input) {
+        std::string out = "";
+
+        // 1. Escape de caracteres de controle
+        for (char c: input) {
+            if (c == '#') out += "##";
+            else if (c == '$') out += "$$";
+            else if (c == '`') out += "``";
+            else out += c;
+        }
+
+        // Função Lambda auxiliar de substituição
+        auto replaceAll = [](std::string &str, const std::string &from, const std::string &to) {
+            size_t startPos = 0;
+            while ((startPos = str.find(from, startPos)) != std::string::npos) {
+                str.replace(startPos, from.length(), to);
+                startPos += to.length();
+            }
+        };
+
+        // 2. Loop Automático: substitui todas as palavras-chave cadastradas pelos seus tokens!
+        for (const auto &token: artexTokens) {
+            // Ignora tokens de sistema (pasta e arquivo)
+            if (token.getCommand() == "FOLDER" || token.getCommand() == "FILE") continue;
+
+            replaceAll(out, token.getCommand(), "$" + token.getFormation() + "`");
+        }
+
+        return out;
+    }
+
+    static std::string decodeContent(const std::string &input) {
+        std::string out = input;
+
+        auto replaceAll = [](std::string &str, const std::string &from, const std::string &to) {
+            size_t startPos = 0;
+            while ((startPos = str.find(from, startPos)) != std::string::npos) {
+                str.replace(startPos, from.length(), to);
+                startPos += to.length();
+            }
+        };
+
+        // 1. Loop Automático: Reverte todos os tokens para as palavras-chave originais!
+        for (const auto &token: artexTokens) {
+            if (token.getCommand() == "FOLDER" || token.getCommand() == "FILE") continue;
+
+            replaceAll(out, "$" + token.getFormation() + "`", token.getCommand());
+        }
+
+        // 2. Reverte os escapes de caracteres especiais
+        std::string unescaped = "";
+        for (size_t i = 0; i < out.length(); ++i) {
+            if (i + 1 < out.length()) {
+                if (out[i] == '#' && out[i + 1] == '#') {
+                    unescaped += '#';
+                    i++;
+                    continue;
+                }
+                if (out[i] == '$' && out[i + 1] == '$') {
+                    unescaped += '$';
+                    i++;
+                    continue;
+                }
+                if (out[i] == '`' && out[i + 1] == '`') {
+                    unescaped += '`';
+                    i++;
+                    continue;
+                }
+            }
+            unescaped += out[i];
+        }
+
+        return unescaped;
+    }
+
+    static std::string escape(const std::string &input) {
+        std::string out = "";
+        for (char c: input) {
+            if (c == '#') out += "##";
+            else if (c == '$') out += "$$";
+            else if (c == '`') out += "``";
+            else out += c;
+        }
+        return out;
+    }
+};
+
+// ==========================================
+// Estruturas de Dados
+// ==========================================
+
+class File {
+private:
+    std::string fileName;
+    std::string typeFile; // ex: txt, cpp, json
+    std::string content;
+    std::string parent;
+
+public:
+    File(std::string name, std::string type, std::string content, std::string parent = "")
+        : fileName(name), typeFile(type), content(content), parent(parent) {
+    }
+
+    std::string getName() const { return fileName; }
+    std::string getType() const { return typeFile; }
+    std::string getContent() const { return content; }
+    std::string getParent() const { return parent; }
+
+    void setContent(const std::string &newContent) { content = newContent; }
+    void setParent(const std::string &newParent) { parent = newParent; }
+    void rename(const std::string &newName) { fileName = newName; }
+
+    // Serializa o arquivo para formato .artex
+    // Serializa o arquivo para formato .artex
+    std::string serialize() const {
+        std::string escapedName = ArtexEscaper::escape(fileName);
+        std::string escapedType = ArtexEscaper::escape(typeFile);
+
+        // MUDANÇA AQUI: troca as palavras-chave (int, class, etc.) pelos tokens $VI`, $CC`, etc.
+        std::string encodedContent = ArtexEscaper::encodeContent(content);
+
+        std::string escapedParent = ArtexEscaper::escape(parent);
+
+        return "$" + getTokenFormation("FILE") + "`" + escapedName + "|" + escapedType + "|\n" + encodedContent + "|" +
+               escapedParent + "`\n";
+    }
+};
+
+class BuilderFolder {
+private:
+    std::string folderName;
+    int folderID;
+    int parentID;
+
+    std::vector<BuilderFolder> subFolders;
+    std::vector<File> files;
+
+public:
+    BuilderFolder(std::string folderName, int folderID, int parentID = -1)
+        : folderName(folderName), folderID(folderID), parentID(parentID) {
+    }
+
+    void rename(std::string name) { folderName = name; }
+    int getID() const { return folderID; }
+    int getParentID() const { return parentID; }
+    std::string getName() const { return folderName; }
+
+    void addSubFolder(const BuilderFolder &folder) { subFolders.push_back(folder); }
+    void addFile(const File &file) { files.push_back(file); }
+
+    std::string serialize() const {
+        std::ostringstream ss;
+        std::string escapedName = ArtexEscaper::escape(folderName);
+
+        // Header da pasta: $D`id|parent_id|nome`
+        ss << "$" << getTokenFormation("FOLDER") << "`" << folderID << "|" << parentID << "|" << escapedName << "`\n";
+        for (const auto &file: files) {
+            ss << "  " << file.serialize() << "\n";
+        }
+
+        for (const auto &folder: subFolders) {
+            ss << folder.serialize();
+        }
+
+        return ss.str();
+    }
+};
+
+// ==========================================
+// Empacotador Automático de Pastas Reais
+// ==========================================
+class ArtexBuilder {
+private:
+    inline static int idCounter;
+
+    // Função auxiliar para verificar se a extensão deve ser ignorada
+    static bool isIgnoredExtension(const std::string &ext) {
+        // Converte a extensão para minúsculas
+        std::string lowerExt = ext;
+        std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::tolower);
+
+        // Lista de extensões binárias/compiladas perigosas
+        static const std::set<std::string> ignoredExtensions = {
+            "exe", "dll", "so", "dylib", "a", "lib", "o", "obj",
+            "out", "bin", "class", "pyc", "pyd", "elf", "sh"
+        };
+
+        return ignoredExtensions.count(lowerExt) > 0;
+    }
+
+    static void scanDirectoryRecursively(const fs::path &basePath, const fs::path &currentPath,
+                                         BuilderFolder &currentFolder) {
+        for (const auto &entry: fs::directory_iterator(currentPath)) {
+            // Ignora o próprio arquivo .artex
+            if (entry.path().extension() == ".artex") continue;
+
+            if (fs::is_directory(entry)) {
+                int newID = ++idCounter;
+                std::string relPath = fs::relative(entry.path(), basePath).string();
+                BuilderFolder subFolder(relPath, newID, currentFolder.getID());
+
+                scanDirectoryRecursively(basePath, entry.path(), subFolder);
+
+                // Só adiciona a pasta se ela contiver arquivos ou subpastas
+                currentFolder.addSubFolder(subFolder);
+            } else if (fs::is_regular_file(entry)) {
+                std::string ext = entry.path().extension().string();
+                if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
+
+                // FILTRO: Ignora se for um arquivo compilado/binário
+                if (isIgnoredExtension(ext)) {
+                    std::cout << "[IGNORADO BINÁRIO] " << entry.path().filename().string() << std::endl;
+                    continue;
+                }
+
+                std::string filename = entry.path().stem().string();
+
+                std::ifstream inFile(entry.path(), std::ios::in | std::ios::binary);
+                std::string content = "";
+                if (inFile) {
+                    content = std::string((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+                }
+
+                std::string relParent = fs::relative(entry.path().parent_path(), basePath).string();
+                if (relParent == ".") relParent = "root";
+
+                File fileObj(filename, ext, content, relParent);
+                currentFolder.addFile(fileObj);
+            }
+        }
+    }
+
+public:
+    static bool packToArtex(const std::string &inputPathStr) {
+        fs::path inputPath(inputPathStr);
+        if (!fs::exists(inputPath)) {
+            std::cerr << "[ERRO] O caminho especificado nao existe: " << inputPathStr << std::endl;
+            return false;
+        }
+
+        idCounter = 0;
+        fs::path outputPath = inputPath;
+
+        if (fs::is_directory(inputPath)) {
+            outputPath += ".artex";
+            BuilderFolder rootFolder(inputPath.filename().string(), idCounter, -1);
+            scanDirectoryRecursively(inputPath, inputPath, rootFolder);
+
+            std::ofstream outFile(outputPath, std::ios::binary);
+            if (!outFile.is_open()) return false;
+            outFile << "# Artex Archive - Generated automatically\n";
+            outFile << rootFolder.serialize();
+            outFile.close();
+        } else {
+            std::string ext = inputPath.extension().string();
+            if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
+
+            // Verifica se o arquivo único é binário
+            if (isIgnoredExtension(ext)) {
+                std::cerr << "[ERRO] Arquivos compilados/binarios nao sao permitidos: " << inputPathStr << std::endl;
+                return false;
+            }
+
+            outputPath.replace_extension(".artex");
+
+            std::ifstream inFile(inputPath, std::ios::in | std::ios::binary);
+            std::string content = "";
+            if (inFile) {
+                content = std::string((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+            }
+
+            File singleFile(inputPath.stem().string(), ext, content, "SINGLE_FILE");
+
+            std::ofstream outFile(outputPath, std::ios::binary);
+            if (!outFile.is_open()) return false;
+            outFile << "# Artex Single File\n";
+            outFile << singleFile.serialize();
+            outFile.close();
+        }
+
+        std::cout << "[ARTEX] Arquivo gerado com sucesso em: " << outputPath.string() << std::endl;
+        return true;
+    }
+};
+
+class ArtexUnpacker {
+public:
+    static bool unpackFromArtex(const std::string &artexFilePath) {
+        fs::path artexPath(artexFilePath);
+        if (!fs::exists(artexPath) || artexPath.extension() != ".artex") {
+            std::cerr << "[ERRO] Arquivo .artex invalido ou nao encontrado.\n";
+            return false;
+        }
+
+        std::ifstream inFile(artexPath, std::ios::in | std::ios::binary);
+        if (!inFile.is_open()) return false;
+
+        std::string fullContent((std::istreambuf_iterator<char>(inFile)),
+                                std::istreambuf_iterator<char>());
+        inFile.close();
+
+        std::string folderToken = "$" + getTokenFormation("FOLDER") + "`";
+        std::string fileToken = "$" + getTokenFormation("FILE") + "`";
+
+        // Verifica se é um arquivo único ou pasta
+        bool isSingleFileMode = (fullContent.find(folderToken) == std::string::npos);
+
+        fs::path outputDir = artexPath.parent_path();
+        if (!isSingleFileMode) {
+            outputDir /= artexPath.stem(); // Para pastas, cria o diretório com o nome do projeto
+            fs::create_directories(outputDir);
+        }
+
+        const int larguraBarra = 20;
+
+        size_t totalBytes = fullContent.length();
+        size_t pos = 0;
+        size_t ultimoProgressoInt = 0; // Evita redesenhar a barra se a porcentagem não mudou
+
+        while (pos < totalBytes) {
+            // 1. Processa Pastas ($D`id|parent|caminho_relativo`)
+            if (!isSingleFileMode && fullContent.compare(pos, folderToken.length(), folderToken) == 0) {
+                pos += folderToken.length();
+                size_t endTag = fullContent.find('`', pos);
+                if (endTag == std::string::npos) break;
+
+                std::string header = fullContent.substr(pos, endTag - pos);
+                pos = endTag + 1;
+
+                std::stringstream ss(header);
+                std::string id, parentId, folderPathStr;
+
+                if (std::getline(ss, id, '|') && std::getline(ss, parentId, '|') && std::getline(ss, folderPathStr)) {
+                    folderPathStr = ArtexEscaper::decodeContent(folderPathStr);
+
+                    if (parentId != "-1" && !folderPathStr.empty()) {
+                        fs::path subFolderPath = outputDir / folderPathStr;
+                        fs::create_directories(subFolderPath);
+                    }
+                }
+            }
+            // 2. Processa Arquivos ($F`nome|tipo|conteudo|parent`)
+            else if (fullContent.compare(pos, fileToken.length(), fileToken) == 0) {
+                pos += fileToken.length();
+                size_t endTag = fullContent.find('`', pos);
+                if (endTag == std::string::npos) break;
+
+                std::string dataBlock = fullContent.substr(pos, endTag - pos);
+                pos = endTag + 1;
+
+                size_t p1 = dataBlock.find('|');
+                size_t p2 = dataBlock.find('|', p1 + 1);
+                size_t p3 = dataBlock.rfind('|');
+
+                if (p1 != std::string::npos && p2 != std::string::npos && p3 != std::string::npos && p2 < p3) {
+                    std::string rawName = dataBlock.substr(0, p1);
+                    std::string rawType = dataBlock.substr(p1 + 1, p2 - p1 - 1);
+                    std::string rawContent = dataBlock.substr(p2 + 1, p3 - p2 - 1);
+                    std::string rawParent = dataBlock.substr(p3 + 1);
+
+                    std::string realName = ArtexEscaper::decodeContent(rawName);
+                    std::string realType = ArtexEscaper::decodeContent(rawType);
+                    std::string realContent = ArtexEscaper::decodeContent(rawContent);
+                    std::string realParent = ArtexEscaper::decodeContent(rawParent);
+
+                    fs::path targetFolder = outputDir;
+
+                    if (realParent != "SINGLE_FILE" && realParent != "root" && !realParent.empty()) {
+                        targetFolder = outputDir / realParent;
+                        fs::create_directories(targetFolder);
+                    }
+
+                    fs::path filePath = targetFolder / (realType.empty() ? realName : (realName + "." + realType));
+
+                    std::ofstream outFile(filePath, std::ios::binary);
+                    if (outFile.is_open()) {
+                        outFile << realContent;
+                        outFile.close();
+                        // Nota: Removido o print antigo para não quebrar a barra visualmente
+                    }
+                }
+            } else {
+                pos++;
+            }
+
+            // ==========================================
+            // CÁLCULO E EXIBIÇÃO DA BARRA DE PROGRESSO
+            // ==========================================
+            float progresso = static_cast<float>(pos) / totalBytes;
+            size_t progressoInt = static_cast<size_t>(progresso * 100);
+
+            // Só redesenha se a porcentagem mudou (melhora muito a performance)
+            if (progressoInt != ultimoProgressoInt || pos == totalBytes) {
+                ultimoProgressoInt = progressoInt;
+                int posicaoBarra = larguraBarra * progresso;
+
+                std::cout << "\rDesempacotando: [";
+                for (int j = 0; j < larguraBarra; ++j) {
+                    if (j < posicaoBarra) std::cout << "=";
+                    else if (j == posicaoBarra) std::cout << ">";
+                    else std::cout << " ";
+                }
+                std::cout << "] " << progressoInt << "%";
+                std::cout.flush();
+            }
+        }
+
+        std::cout << "\n[ARTEX] Concluido com sucesso!\n";
+        return true;
+    }
+};
+
 // ==========================================
 // JSONC PARSER (REMOVE COMENTÁRIOS)
 // ==========================================
-std::string parseJSONC(const std::string& filepath) {
+std::string parseJSONC(const std::string &filepath) {
     std::ifstream file(filepath);
     if (!file.is_open()) return "{}";
 
-    std::string source((std::istreambuf_iterator<char>(file)),
-                        std::istreambuf_iterator<char>());
+    std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     std::string cleanJson;
     cleanJson.reserve(source.size());
 
@@ -116,13 +648,11 @@ private:
         std::string jsonContent = parseJSONC(configFile);
         try {
             json j = json::parse(jsonContent);
-            if (j.contains("config file") &&
-                j["config file"].contains("configs") &&
-                j["config file"]["configs"].contains("limitepackages")) {
-                return j["config file"]["configs"]["limitepackages"].get<int>();
+            if (j.contains("config")) {
+                return j["config"].get<int>();
             }
-        } catch (const std::exception& e) {
-            printf("[Artex Warning] Falha ao ler limite de snapshots no JSONC: %s. Usando o padrão (5).\n", e.what());
+        } catch (const std::exception &e) {
+            printf("[Artex] Erro ao ler limite de snapshots: %s. Usando padrão (5).\n", e.what());
         }
         return 5;
     }
@@ -137,9 +667,9 @@ private:
         return versions;
     }
 
-    void writeActiveVersions(const std::vector<std::string>& versions) {
+    void writeActiveVersions(const std::vector<std::string> &versions) {
         std::ofstream file(versionsFile, std::ios::trunc);
-        for (const auto& v : versions) {
+        for (const auto &v: versions) {
             file << v << "\n";
         }
     }
@@ -149,9 +679,12 @@ public:
         ensureDirectoriesExist();
     }
 
-    std::string createVersion(const std::string& customName = "") {
+    std::string createVersion(const std::string &customName = "") {
         std::string code = generateRandomCode(12);
         int limit = getSnapshotLimit();
+
+        system("rm -rf /artex/gitsave/config/*");
+        system("cp -r ~/.config/* /artex/gitsave/config/");
 
         printf("[Artex] Copiando arquivos de localfiles para gitsave...\n");
         std::string cpCmd = "cp -r " + rootPath + "/localfiles/* " + gitSavePath + "/ 2>/dev/null";
@@ -214,7 +747,7 @@ public:
 
     void listVersionsJson() {
         printf("=== Snapshots Salvos em JSON (%s) ===\n", jsonSavesPath.c_str());
-        for (const auto& entry : fs::directory_iterator(jsonSavesPath)) {
+        for (const auto &entry: fs::directory_iterator(jsonSavesPath)) {
             if (entry.path().extension() == ".json") {
                 std::ifstream f(entry.path());
                 try {
@@ -287,48 +820,65 @@ public:
 
     void buildSystem() {
         printf("[Artex] Salvando estado atual antes de aplicar build...\n");
-        createVersion("build_auto_save");
 
         printf("[Artex] Lendo arquivo JSONC: %s...\n", configFile.c_str());
         std::string jsonRaw = parseJSONC(configFile);
 
+        // Update System
+        system("yay -Syu --noconfirm && flatpak update");
+
         try {
             json config = json::parse(jsonRaw);
 
-            // Acessa a raiz "coonfig file" configurada
-            if (config.contains("config")) {
-                auto targetConfig = config["config file"];
-
-                // Aplica hostname
-                if (targetConfig.contains("hostname")) {
-                    std::string hostname = targetConfig["hostname"].get<std::string>();
-                    printf(" -> Defina Hostname do sistema: %s\n", hostname.c_str());
-                    std::string hostCmd = "sudo hostnamectl set-hostname " + hostname;
-                    std::system(hostCmd.c_str());
-                } else {
-                    printf("[AVISO] Chave 'hostname' não encontrada dentro de 'config file'.\n");
-                }
-
-                // Instala pacotes via yay
-                if (targetConfig.contains("packages") && targetConfig["packages"].is_array()) {
-                    printf(" -> Instalando pacotes definidos via Yay...\n");
-                    for (const auto& pkg : targetConfig["packages"]) {
-                        std::string pkgName = pkg.get<std::string>();
-                        printf(" -> Instalando pacote: %s\n", pkgName.c_str());
-                        std::string installCmd = "yay -S --noconfirm " + pkgName;
-                        std::system(installCmd.c_str());
-                    }
-                } else {
-                    printf(" [AVISO] Lista 'packages' vazia ou não encontrada em 'config file'.\n");
-                }
+            // 1. Aplica hostname (está na raiz)
+            if (config.contains("hostname") && config["hostname"].is_string()) {
+                std::string hostname = config["hostname"].get<std::string>();
+                printf(" -> Defina Hostname do sistema: %s\n", hostname.c_str());
+                std::string hostCmd = "sudo hostnamectl set-hostname " + hostname;
+                std::system(hostCmd.c_str());
             } else {
-                printf("[ERRO]  Chave raiz 'config file' não encontrada no arquivo JSONC.\n");
+                printf("[AVISO] Chave 'hostname' não encontrada na raiz do JSON.\n");
             }
 
-        } catch (const std::exception& e) {
-            printf("[Artex Erro] Falha no parseamento do JSONC durante o build: %s\n", e.what());
+            // 2. Instala pacotes via yay (está na raiz)
+            if (config.contains("packages") && config["packages"].is_array()) {
+                printf(" -> Instalando pacotes definidos via Yay...\n");
+                for (const auto &pkg: config["packages"]) {
+                    std::string pkgName = pkg.get<std::string>();
+                    printf(" -> Instalando pacote: %s\n", pkgName.c_str());
+                    std::string installCmd = "yay -S --noconfirm " + pkgName;
+                    std::system(installCmd.c_str());
+                }
+            } else {
+                printf("[AVISO] Lista 'packages' não encontrada ou inválida na raiz do JSON.\n");
+            }
+
+            // 3. Instala pacotes via flathub
+            if (config.contains("flatpak") && config["flatpak"].is_array()) {
+                printf(" -> Instalando pacotes definidos via Yay...\n");
+                for (const auto &pkg: config["flatpak"]) {
+                    std::string pkgName = pkg.get<std::string>();
+                    printf(" -> Instalando pacote: %s\n", pkgName.c_str());
+                    std::string installCmd = "flatpak install flathub " + pkgName;
+                    std::system(installCmd.c_str());
+                }
+            } else {
+                printf("[AVISO] Lista 'packages' não encontrada ou inválida na raiz do JSON.\n");
+            }
+
+            // 4. Lê as configurações internas (do bloco "config" se precisar)
+            if (config.contains("config") && config["config"].is_object()) {
+                auto innerConfig = config["config"];
+                if (innerConfig.contains("limitepackages")) {
+                    int limit = innerConfig["limitepackages"].get<int>();
+                    printf(" -> Limite de snapshots configurado para: %d\n", limit);
+                }
+            }
+        } catch (const json::exception &e) {
+            printf("[ERRO] Falha ao processar o JSON: %s\n", e.what());
         }
 
+        createVersion("build_auto_save");
         printf("[Artex] Processo de build finalizado!\n");
     }
 };
@@ -340,16 +890,20 @@ void printUsage() {
     printf("Artex System Recovery Manager\n");
     printf("Uso: ArtexRecovery [opção]\n");
     printf("Opções:\n");
+    printf("--version | -v       Mostrar a versao do ArtexRecovery");
     printf("--build              Salva o estado atual e aplica as configurações do JSONC\n");
     printf("--save [nome]        Cria um novo snapshot e salva histórico\n");
     printf("--listversions-git   Mostra todos os saves/commits no Git\n");
     printf("--listversions-json  Mostra todos os saves salvos no diretório jsonsaves\n");
-    printf("--roolback           Restaura o estado do último backup local em lastBackup\n");
-    printf("--roolback-git <N>   Retorna N commits atrás no Git e roda o build\n");
-    printf("--roolback-json <N>  Retorna N snapshots atrás via JSON e roda o build\n");
+    printf("--rollback           Restaura o estado do último backup local em lastBackup\n");
+    printf("--rollback-git <N>   Retorna N commits atrás no Git e roda o build\n");
+    printf("--rollback-json <N>  Retorna N snapshots atrás via JSON e roda o build\n");
+    printf("--Create-artex       Criar / Compilar um arquivo ou pasta em .artex");
+    printf("--Rebuild-artex      Extrair um arquivo .artex");
+    printf("--uninstall          Uninstall ArtexRecovery");
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
     if (argc < 2) {
         printUsage();
         return 1;
@@ -361,9 +915,10 @@ int main(int argc, char* argv[]) {
 
     if (command == "--listversions-git") {
         manager.listVersionsGit();
-    }
-    else if (command == "--listversion-json") {
+        return 0;
+    } else if (command == "--listversions-json") {
         manager.listVersionsJson();
+        return 0;
     }
 
     if (getuid() != 0) {
@@ -373,31 +928,58 @@ int main(int argc, char* argv[]) {
 
     if (command == "--build") {
         manager.buildSystem();
-    }
-    else if (command == "--save") {
+    } else if (command == "--save") {
         std::string name = (argc >= 3) ? argv[2] : "";
         manager.createVersion(name);
-    }
-    else if (command == "--roolback") {
+    } else if (command == "--rollback") {
         manager.rollbackLastBackup();
-    }
-    else if (command == "--roolback-git") {
+    } else if (command == "--rollback-git") {
         if (argc < 3) {
-            printf("[Artex Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-git 2\n");
+            printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-git 2\n");
             return 1;
         }
         int index = std::atoi(argv[2]);
         manager.rollbackGit(index);
-    }
-    else if (command == "--roolback-json") {
+    } else if (command == "--rollback-json") {
         if (argc < 3) {
-            printf("[Artex Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-json 1\n");
+            printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-json 1\n");
             return 1;
         }
         int index = std::atoi(argv[2]);
         manager.rollbackJson(index);
-    }
-    else {
+    } else if (command == "--Create-artex") {
+        if (argc < 3) {
+            printf("[Erro]: Informe o caminho para empacotar.\n");
+            return 1;
+        }
+        std::string targetPath = argv[2];
+        ArtexBuilder::packToArtex(targetPath);
+    } else if (command == "--Rebuild-artex") {
+        if (argc < 3) {
+            printf("[Erro]: Informe o caminho para empacotar.\n");
+            return 1;
+        }
+        std::string targetPath = argv[2];
+        ArtexUnpacker::unpackFromArtex(targetPath);
+    } else if (command == "--uninstall") {
+        printf("[1] - Confirm \n");
+        printf("[2] - Unistall but dont erase my data \n");
+        printf("[0] - exit \n");
+
+        std::string chose;
+        std::cin >> chose;
+
+        if (chose == "1") {
+            system("rm -rf /artex");
+            system("rm -rf /usr/local/bin/ArtexRecovery");
+            printf("[Artex] bye bye");
+        } else if (chose == "2") {
+            system("rm -rf /usr/local/bin/ArtexRecovery");
+        } else {
+            printf("nothing happened");
+            return 0;
+        }
+    } else {
         printf("[Artex Erro] Comando desconhecido: %s\n", command.c_str());
         printUsage();
         return 1;

@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artex Wiki</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="script.js" defer></script>
+</head>
+
+<body>
+    <!--div id="painel">
+        <h1 class="paineltitle">Artex</h1>
+        <a class="painelbutton">index</a>
+        <a class="painelbutton" href="https://github.com/Dimitrof04/ArtexRecovery">Github</a>
+    </div-->
+    <div id="main-div">
+        <h1 class="title">Artex wiki</h1>
+        <div id="summary"></div>
+        <div id="text">
+            <h1 id="Artex-Folder">1.1 - Artex Folder</h1>
+            <p>
+                A Artex folder e a pasta que gerencia e organiza todo o sistema Artex
+                em varias subpastas
+            </p>
+            <h2>Ela se localiza no root(/)</h2>
+            <h1 id="--version | -v">2.1 version</h1>
+            <p>
+                Esse comando mostra a versao atual do Artex
+                e a ultima versao salva por voce (--build ou --save)
+            </p>
+            <div class="console" style="height: 6rem;">
+                <p>1.0.1</p>
+                <p>last save version : idk123</p>
+            </div>
+
+            <h1 id="--build">2.2 build</h1>
+            <p>
+                Esse e um dos comandos mais importantes para seu computador
+                ele salva uma versao do seu computador usando git e .artex
+                o processo acontece assim
+            </p>
+            <div class="console">
+                <p class="comment"># Update your system</p>
+                <p>yay -Syu <span class="comment"># Update sys with yay</p>
+                <p class="comment"># Copyfiles (.config, artexbuild.json, more...)</p>
+                <p class="comment"># generation version</p>
+                <p class="comment"># commit (git) for save your version</p>
+            </div>
+
+            <h1 id="--save [nome]">2.3 save</h1>
+            <p>
+                Esse comando se reposabiliza por salvar uma versao manualmente criada por voce,
+                para criar uma versao sua ate que e bem facil
+            </p>
+            <div class="console">
+                <p>Artex --save name</p>
+                <p class="comment"># e.. apenas troca "name" pelo nome da sua #versao</p>
+            </div>
+
+            <h1 id="--listversions-git">2.4 - --listversions-git</h1>
+            <p>esse comando mostra todas as versoes salvas quanto no build quanto suas com --save com git, </p>
+            <p class="tip">! dependendo do caso pode mostrar muitas versoes e pode acontecer de nao consigir mostrar tudo (experiencia propria)</p>
+            <div class="console">
+                <p class="comment"># eu ia mostrar aqui um exemplo porem o git 
+                    #nao sabe quem eu sou (preguica de usar git 
+                    #config)
+                </p>
+            </div>
+            <h1 id="--listversions-json">2.5 - --listversions-json</h1>
+            <p>esse comando mostra todas as versoes salvas quanto no build quanto suas com --save apenas com os jsons </p>
+            <p class="tip">! dependendo do caso pode mostrar muitas versoes e pode acontecer de nao consigir mostrar tudo (experiencia propria)</p>
+            <div class="console">
+                <p>- Code: 8rwvGCFKk16L | Name: build_auto_save | version: 14</p>
+                <p>- Code: WcW0veo4Pwt0 | Name: build_auto_save | version: 13</p>
+                <p>- Code: JWGlGaIIhDVK | Name: build_auto_save | version: 12</p>
+            </div>
+            <h1 id="--rollback">2.6 - --rollback</h1>
+            <p>
+                Retornar no ultimo save de forma rapida
+            </p>
+
+            <h1 id="--rollback-git &lt;N&gt;">2.7 - --rollback-git &lt;N&gt;</h1>
+            <p>
+                Faz o sistema retornar exatamente <strong>N</strong> commits atrás no histórico do Git e executa o build
+                automaticamente.
+            </p>
+            <h2>Nota: Substitua &lt;N&gt; pelo número de versões que deseja voltar.</h2>
+
+            <h1 id="--rollback-json &lt;N&gt;">2.8 - --rollback-json &lt;N&gt;</h1>
+            <p>
+                Faz o sistema retornar exatamente <strong>N</strong> snapshots atrás através dos registros JSON e
+                executa o build.
+            </p>
+
+            <h1 id="--Create-artex">2.9 - --Create-artex</h1>
+            <p>
+                Comando utilizado para criar ou compilar um arquivo ou diretório inteiro para o formato compactado e
+                proprietário <code>.artex</code>.
+            </p>
+
+            <h1 id="--Rebuild-artex">2.10 - --Rebuild-artex</h1>
+            <p>
+                Realiza a engenharia reversa ou descompactação de um arquivo com a extensão <code>.artex</code>,
+                extraindo seu conteúdo original.
+            </p>
+
+            <h1 id="--uninstall">2.11 - --uninstall</h1>
+            <p>
+                Executa o script de remoção completa do ArtexRecovery, limpando os binários e dependências do sistema.
+            </p>
+            <h1>3.3 Keys</h1>
+            <div class="console">
+                <p class="key">hostname: "user" <span class="comment">// your hostname</span></p>
+            </div>
+            <p>nessa key sera o nome do seu computador (voce pode comentar ou deletar essa key se nao quiser alterar)</p>
+            <div class="console"><p class="comment"># use hostnamectl para ver o atual nome da sua maquina</p></div>
+            <div class="console">
+                <p class="key">"packages" : [] <span class="comment">// AUR packages</span></p>
+            </div>
+            <p>dentro da lista dessa key podemos colocar qualquer repositorio da aur tipo : <span class="tip">cmatrix, cava, lavat, etc...</p>
+            
+        </div>
+    </div>
+</body>
+
+</html>
