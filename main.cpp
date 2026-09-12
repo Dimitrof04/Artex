@@ -11,7 +11,9 @@
 #include <nlohmann/json.hpp>
 #include <memory>
 #include <algorithm>
+#include <cstring>
 #include <set>
+#include <stdio.h>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -607,6 +609,9 @@ std::string parseJSONC(const std::string &filepath) {
 // ==========================================
 // VERSION MANAGER CLASS
 // ==========================================
+
+bool Noconfirmroot = false;
+
 class VersionManager {
 private:
     const std::string rootPath = "/artex";
@@ -880,22 +885,28 @@ public:
         }
 
         char updatesys = 'Y';
-        printf("[Artex] Do you want update your sys? [Y/n]");
-        try {
-            std::cin >> updatesys;
-        } catch (...) {
-            updatesys = 'Y';
+        
+        if (!Noconfirmroot) {
+            printf("[Artex] Do you want update your sys? [Y/n]");
+            try {
+                std::cin >> updatesys;
+            } catch (...) {
+                updatesys = 'Y';
+            }
         }
 
+        
         if (updatesys != 'N' || updatesys != 'n') {
             system("yay -Syu --noconfirm");
         }
 
-        printf("[Artex] Do you want update your flatpak apps? [Y/n]");
-        try {
-            std::cin >> updatesys;
-        } catch (...) {
-            updatesys = 'Y';
+        if (!Noconfirmroot) {
+            printf("[Artex] Do you want update your flatpak apps? [Y/n]");
+            try {
+                std::cin >> updatesys;
+            } catch (...) {
+                updatesys = 'Y';
+            }
         }
 
         if (updatesys != 'N' || updatesys != 'n') {
@@ -916,6 +927,7 @@ void printUsage() {
     printf("--help    | -h       Show Help Painel\n");
     printf("--version | -v       Show ArtexRecovery version\n");
     printf("--build              Save current state and apply JSONC configurations\n");
+    printf("--build -y           --build + noconfirm\n");
     printf("--save [name]        Create a new snapshot and save history\n");
     printf("--lv-git             Show all saves/commits in Git\n");
     printf("--lv-json            Show all saves stored in the jsonsaves directory\n");
@@ -963,56 +975,86 @@ int main(int argc, char *argv[]) {
         ArtexUnpacker::unpackFromArtex(targetPath);
     }
 
-    if (getuid() != 0) {
-        printf("[Artex Erro] Acesso root necessário. Por favor, execute como sudo.\n");
-        return 1;
-    }
+    bool sudo = getuid() == 0;
 
     if (command == "--build") {
-        manager.buildSystem();
-        return 0;
+        //if (argc < 3 && std::string(argv[2]) == "-y") {
+        //    Noconfirmroot = true;
+        //}
+    	if (sudo) {
+			manager.buildSystem();
+        	return 0;
+		} else {
+            printf("[Error] Permission deniedr");
+            return 1; 
+        }
     } if (command == "--save") {
-        std::string name = (argc >= 3) ? argv[2] : "";
-        manager.createVersion(name);
-        return 0;
-    } if (command == "--rb") {
-        manager.rollbackLastBackup();
-        return 0;
-    } if (command == "--rb-git") {
-        if (argc < 3) {
-            printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-git 2\n");
-            return 1;
-        }
-        int index = std::atoi(argv[2]);
-        manager.rollbackGit(index);
-        return 0;
-    } if (command == "--rb-json") {
-        if (argc < 3) {
-            printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-json 1\n");
-            return 1;
-        }
-        int index = std::atoi(argv[2]);
-        manager.rollbackJson(index);
-        return 0;
-    } if (command == "--uninstall") {
-        printf("[1] - Confirm \n");
-        printf("[2] - Unistall but dont erase my data \n");
-        printf("[0] - exit \n");
-
-        std::string chose;
-        std::cin >> chose;
-
-        if (chose == "1") {
-            system("rm -rf /artex");
-            system("rm -rf /usr/local/bin/Artex");
-            printf("[Artex] bye bye");
-        } else if (chose == "2") {
-            system("rm -rf /usr/local/bin/Artex");
-        } else {
-            printf("nothing happened");
+        if (sudo) {
+            std::string name = (argc >= 3) ? argv[2] : "";
+            manager.createVersion(name);
             return 0;
+        } else {
+            printf("[Error] Permission deniedr");
+            return 1; 
         }
-        return 0;
+    } if (command == "--rb") {
+        if (sudo) {
+            manager.rollbackLastBackup();
+            return 0;
+        } else {
+            printf("[Error] Permission deniedr");
+            return 1; 
+        }
+    } if (command == "--rb-git") {
+        if (sudo) {
+            if (argc < 3) {
+                printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-git 2\n");
+                return 1;
+            }
+            int index = std::atoi(argv[2]);
+            manager.rollbackGit(index);
+            return 0;
+        } else {
+            printf("[Error] Permission deniedr");
+            return 1; 
+        }
+    } if (command == "--rb-json") {
+        if (sudo){
+            if (argc < 3) {
+                printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-json 1\n");
+                return 1;
+            }
+            int index = std::atoi(argv[2]);
+            manager.rollbackJson(index);
+            return 0;
+        } else {
+            printf("[Error] Permission deniedr");
+            return 1; 
+        }
+    } if (command == "--uninstall") {
+        if (sudo) {
+            printf("[1] - Confirm \n");
+            printf("[2] - Unistall but dont erase my data \n");
+            printf("[0] - exit \n");
+
+            std::string chose;
+            std::cin >> chose;
+
+            if (chose == "1") {
+                system("rm -rf /artex");
+                system("rm -rf /usr/local/bin/Artex");
+                printf("[Artex] bye bye");
+            } else if (chose == "2") {
+                system("rm -rf /usr/local/bin/Artex ");
+            } else {
+                printf("nothing happened");
+                return 0;
+            }
+            return 0;
+        } else {
+            printf("[Error] Permission deniedr");
+            return 1; 
+        }
     }
 
     std::cout << "[Artex] unrecognized or invalid command " << command << std::endl;
