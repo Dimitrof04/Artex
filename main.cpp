@@ -683,10 +683,11 @@ public:
         std::string code = generateRandomCode(12);
         int limit = getSnapshotLimit();
 
-        system("rm -rf /artex/gitsave/config/*");
-        system("cp -r ~/.config/* /artex/gitsave/config/");
+        printf("[Artex] Copy configs files configs");
+        std::system("rm -rf /artex/gitsave/config");
+        std::system("cp -r ~/.config /artex/gitsave/config");
 
-        printf("[Artex] Copiando arquivos de localfiles para gitsave...\n");
+        printf("[Artex] Copy localfiles (Artexbuild)\n");
         std::string cpCmd = "cp -r " + rootPath + "/localfiles/* " + gitSavePath + "/ 2>/dev/null";
         std::system(cpCmd.c_str());
 
@@ -824,9 +825,6 @@ public:
         printf("[Artex] Lendo arquivo JSONC: %s...\n", configFile.c_str());
         std::string jsonRaw = parseJSONC(configFile);
 
-        // Update System
-        system("yay -Syu --noconfirm && flatpak update");
-
         try {
             json config = json::parse(jsonRaw);
 
@@ -878,6 +876,29 @@ public:
             printf("[ERRO] Falha ao processar o JSON: %s\n", e.what());
         }
 
+        char updatesys = 'Y';
+        printf("[Artex] Do you want update your sys? [Y/n]");
+        try {
+            std::cin >> updatesys;
+        } catch (...) {
+            updatesys = 'Y';
+        }
+
+        if (updatesys != 'N' || updatesys != 'n') {
+            system("yay -Syu --noconfirm");
+        }
+
+        printf("[Artex] Do you want update your flatpak apps? [Y/n]");
+        try {
+            std::cin >> updatesys;
+        } catch (...) {
+            updatesys = 'Y';
+        }
+
+        if (updatesys != 'N' || updatesys != 'n') {
+            system("flatpak update -y");
+        }
+
         createVersion("build_auto_save");
         printf("[Artex] Processo de build finalizado!\n");
     }
@@ -887,20 +908,20 @@ public:
 // CLI ENTRY POINT
 // ==========================================
 void printUsage() {
-    printf("Artex System Recovery Manager\n");
-    printf("Uso: ArtexRecovery [opção]\n");
-    printf("Opções:\n");
-    printf("--version | -v       Mostrar a versao do ArtexRecovery");
-    printf("--build              Salva o estado atual e aplica as configurações do JSONC\n");
-    printf("--save [nome]        Cria um novo snapshot e salva histórico\n");
-    printf("--listversions-git   Mostra todos os saves/commits no Git\n");
-    printf("--listversions-json  Mostra todos os saves salvos no diretório jsonsaves\n");
-    printf("--rollback           Restaura o estado do último backup local em lastBackup\n");
-    printf("--rollback-git <N>   Retorna N commits atrás no Git e roda o build\n");
-    printf("--rollback-json <N>  Retorna N snapshots atrás via JSON e roda o build\n");
-    printf("--Create-artex       Criar / Compilar um arquivo ou pasta em .artex");
-    printf("--Rebuild-artex      Extrair um arquivo .artex");
-    printf("--uninstall          Uninstall ArtexRecovery");
+    printf("Artex Manager\n");
+    printf("Options:\n");
+    printf("--help    | -h       Show Help Painel\n");
+    printf("--version | -v       Show ArtexRecovery version\n");
+    printf("--build              Save current state and apply JSONC configurations\n");
+    printf("--save [name]        Create a new snapshot and save history\n");
+    printf("--lv-git             Show all saves/commits in Git\n");
+    printf("--lv-json            Show all saves stored in the jsonsaves directory\n");
+    printf("--rb                 Restore the state of the last local backup in lastBackup\n");
+    printf("--rb-git n           Go back N commits in Git and run build\n");
+    printf("--rb-json n          Go back N snapshots via JSON and run build\n");
+    printf("--Ca                 Create / Compile a file or folder into .artex\n");
+    printf("--Ra                 Extract a .artex file\n");
+    printf("--uninstall          Uninstall ArtexRecovery\n");
 }
 
 int main(int argc, char *argv[]) {
@@ -911,14 +932,32 @@ int main(int argc, char *argv[]) {
 
     std::string command = argv[1];
     VersionManager manager;
-
-
-    if (command == "--listversions-git") {
+    if (command == "--version") {
+        printf("[Artex] : version 1");
+        return 0;
+    } if (command == "--help" || command == "-h"){
+        printUsage();
+        return 0;
+    } if (command == "--lv-git") {
         manager.listVersionsGit();
         return 0;
-    } else if (command == "--listversions-json") {
+    } if (command == "--lv-json") {
         manager.listVersionsJson();
         return 0;
+    } if (command == "--Ca") {
+        if (argc < 3) {
+            printf("[Erro]: Informe o caminho para empacotar.\n");
+            return 1;
+        }
+        std::string targetPath = argv[2];
+        ArtexBuilder::packToArtex(targetPath);
+    } if (command == "--Ra") {
+        if (argc < 3) {
+            printf("[Erro]: Informe o caminho para empacotar.\n");
+            return 1;
+        }
+        std::string targetPath = argv[2];
+        ArtexUnpacker::unpackFromArtex(targetPath);
     }
 
     if (getuid() != 0) {
@@ -928,40 +967,31 @@ int main(int argc, char *argv[]) {
 
     if (command == "--build") {
         manager.buildSystem();
-    } else if (command == "--save") {
+        return 0;
+    } if (command == "--save") {
         std::string name = (argc >= 3) ? argv[2] : "";
         manager.createVersion(name);
-    } else if (command == "--rollback") {
+        return 0;
+    } if (command == "--rb") {
         manager.rollbackLastBackup();
-    } else if (command == "--rollback-git") {
+        return 0;
+    } if (command == "--rb-git") {
         if (argc < 3) {
             printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-git 2\n");
             return 1;
         }
         int index = std::atoi(argv[2]);
         manager.rollbackGit(index);
-    } else if (command == "--rollback-json") {
+        return 0;
+    } if (command == "--rb-json") {
         if (argc < 3) {
             printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-json 1\n");
             return 1;
         }
         int index = std::atoi(argv[2]);
         manager.rollbackJson(index);
-    } else if (command == "--Create-artex") {
-        if (argc < 3) {
-            printf("[Erro]: Informe o caminho para empacotar.\n");
-            return 1;
-        }
-        std::string targetPath = argv[2];
-        ArtexBuilder::packToArtex(targetPath);
-    } else if (command == "--Rebuild-artex") {
-        if (argc < 3) {
-            printf("[Erro]: Informe o caminho para empacotar.\n");
-            return 1;
-        }
-        std::string targetPath = argv[2];
-        ArtexUnpacker::unpackFromArtex(targetPath);
-    } else if (command == "--uninstall") {
+        return 0;
+    } if (command == "--uninstall") {
         printf("[1] - Confirm \n");
         printf("[2] - Unistall but dont erase my data \n");
         printf("[0] - exit \n");
@@ -979,11 +1009,11 @@ int main(int argc, char *argv[]) {
             printf("nothing happened");
             return 0;
         }
-    } else {
-        printf("[Artex Erro] Comando desconhecido: %s\n", command.c_str());
-        printUsage();
-        return 1;
+        return 0;
     }
+
+    std::cout << "[Artex] unrecognized or invalid command " << command << std::endl;
+    printf("for help use Artex --help\n");
 
     return 0;
 }

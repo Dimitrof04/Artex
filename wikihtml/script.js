@@ -1,14 +1,14 @@
-const body = document.getElementById("main-div"); // Adicionado o [0] no final
+const mainDiv = document.getElementById("main-div");
 const summary = document.getElementById("summary");
+const sidebarSummary = document.getElementById("sidebar-summary");
 
-let idStruture = 1
+let idStruture = 1;
 
 class ClasseStruture {
-    // O constructor recebe o que antes era o parâmetro da função
     constructor(name) {
         this.name = name;
 
-        // Criamos a lista e o título como propriedades do objeto (usando this)
+        // Main Summary List
         this.list = document.createElement("ul");
         this.list.classList.add("estruture");
 
@@ -19,58 +19,62 @@ class ClasseStruture {
         summary.appendChild(this.list);
         this.list.appendChild(title);
 
-        idStruture++;
+        // Sidebar Mini Summary List
+        this.sidebarList = document.createElement("ul");
+        this.sidebarList.classList.add("sidebar-ul");
+        
+        let sidebarTitle = document.createElement("h3");
+        sidebarTitle.classList.add("sidebar-title");
+        sidebarTitle.innerText = name;
+        
+        sidebarSummary.appendChild(sidebarTitle);
+        sidebarSummary.appendChild(this.sidebarList);
 
-        console.log(name + " foi criado com sucesso");
+        idStruture++;
     }
 
-    // A função interna vira um método da classe
     createinfo(text, id) {
+        if (!id) id = text;
+
+        // Main summary item
         let li = document.createElement("li");
-        li.innerText = "* " + text;
+        li.innerText = "• " + text;
 
-        if (!id){
-            id = text;
-        }
+        // Sidebar mini-summary item
+        let sidebarLi = document.createElement("li");
+        sidebarLi.innerText = text;
 
-        // 1. Busca o elemento de destino na página pelo ID
-        let idforsearch = document.getElementById(id);
+        let targetElement = document.getElementById(id);
 
-        if (idforsearch) {
-            // Opcional: Adiciona um clique na LI caso o usuário queira voltar lá depois
-            li.addEventListener("click", () => {
-                idforsearch.scrollIntoView({ behavior: "smooth", block: "start" });
-            });
+        if (targetElement) {
+            const scrollAction = () => {
+                targetElement.scrollIntoView({ behavior: "smooth", block: "start" });
+            };
+            li.addEventListener("click", scrollAction);
+            sidebarLi.addEventListener("click", scrollAction);
         }
 
         this.list.appendChild(li);
+        this.sidebarList.appendChild(sidebarLi);
 
-        // 2. Quando terminar tudo, faz a viagem automática até o destino
-        if (idforsearch) {
-            idforsearch.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-
-        console.log(text + " foi criado com sucesso");
         return li;
     }
 }
 
 let summarylists = {
     estrutura: {
-        obj: new ClasseStruture("Estrutura"),
+        obj: new ClasseStruture("Structure"),
         list: [
             "Artex-Folder",
             "git-saves",
             "json-saves",
             "last-Backup",
             "local-files",
-            "local-saves",
             "versions.txt"
         ]
     },
-    // Nova coluna com os comandos do programa
     comandos: {
-        obj: new ClasseStruture("Comandos"),
+        obj: new ClasseStruture("Commands"),
         list: [
             "--version | -v",
             "--build",
@@ -90,12 +94,12 @@ let summarylists = {
         list: [
             "ArtexBuild",
             "processo",
-            "keys"
+            "Artex-keys"
         ]
     }
 };
 
-// O seu mesmo loop automático vai ler as duas colunas perfeitamente!
+// Generate summary items dynamically
 for (let item of Object.values(summarylists)) {
     let obj = item.obj;
     for (let i of item.list) { 

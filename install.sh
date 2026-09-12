@@ -15,17 +15,17 @@ cd gitsave
 mkdir config
 
 sudo git init
-sudo git config --global user.email "ArtexRecoveryautogit@gmail.com"
-sudo git config --global user.name "ArtexRecoveryautogit"
+sudo git config --global user.email "Artexautogit@gmail.com"
+sudo git config --global user.name "Artexxautogit"
 
-sudo cp ~/ArtexRecovery/basefiles/* /artex/localfiles
+sudo cp ~/Artex/basefiles/* /artex/localfiles
 
-cd ~/ArtexRecovery
+cd ~/Artex
 
 mkdir -p include/nlohmann
 curl -L https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp -o include/nlohmann/json.hpp
 
-g++ -std=c++17 main.cpp -I include -o ArtexRecovery
+g++ -std=c++17 main.cpp -I include -o Artex
 mv ArtexRecovery /artex/ArtexRecovery
 
-sudo ln ~/ArtexRecovery/ArtexRecovery /usr/local/bin/ArtexRecovery
+sudo ln ~/ArtexRecovery/ArtexRecovery /usr/local/bin/Artex
