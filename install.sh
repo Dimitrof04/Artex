@@ -26,6 +26,6 @@ mkdir -p include/nlohmann
 curl -L https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp -o include/nlohmann/json.hpp
 
 g++ -std=c++17 main.cpp -I include -o Artex
-mv ArtexRecovery /artex/ArtexRecovery
+mv Artex /artex/Artex
 
-sudo ln ~/ArtexRecovery/ArtexRecovery /usr/local/bin/Artex
+sudo ln -s ~/Artex/Artex /usr/local/bin/Artex

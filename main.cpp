@@ -49,6 +49,7 @@ inline const std::vector<ArtexToken> artexTokens = {
     {"float ", "VF"},
     {"double ", "VD"},
     {"string ", "VS"},
+    {"char", "VC"},
     {"return ", "RE"},
     {"for ", "FF"},
     {"while ", "FW"},
@@ -62,6 +63,8 @@ inline const std::vector<ArtexToken> artexTokens = {
     {"void", "TV"},
     {"from", "TF"},
     {"import", "TI"},
+    // javascript (web) 
+    {"let", "wl"},
     // lua
     {"local", "Ll"},
     {"fuction", "Lf"},
@@ -691,16 +694,16 @@ public:
         std::string cpCmd = "cp -r " + rootPath + "/localfiles/* " + gitSavePath + "/ 2>/dev/null";
         std::system(cpCmd.c_str());
 
-        printf("[Artex] Atualizando último backup...\n");
+        printf("[Artex] Update Last Backup...\n");
         std::string backupCmd = "cp -r " + gitSavePath + "/* " + rootPath + "/lastBackup/ 2>/dev/null";
         std::system(backupCmd.c_str());
 
-        printf("[Artex] Salvando alterações no repositório Git...\n");
+        printf("[Artex] Save Backup...\n");
         std::string gitCmd = "cd " + gitSavePath + " && git add . && git commit -m '" + code + "'";
         int gitResult = std::system(gitCmd.c_str());
 
         if (gitResult != 0) {
-            printf("[Artex Warning] Commit no Git retornou status diferente de zero.\n");
+            printf("[Warn] Commit no Git retornou status diferente de zero.\n");
         }
 
         // Lê a configuração atual para embutir na chave "jsons"
@@ -831,11 +834,11 @@ public:
             // 1. Aplica hostname (está na raiz)
             if (config.contains("hostname") && config["hostname"].is_string()) {
                 std::string hostname = config["hostname"].get<std::string>();
-                printf(" -> Defina Hostname do sistema: %s\n", hostname.c_str());
+                printf("[Artex] Set host name %s\n", hostname.c_str());
                 std::string hostCmd = "sudo hostnamectl set-hostname " + hostname;
                 std::system(hostCmd.c_str());
             } else {
-                printf("[AVISO] Chave 'hostname' não encontrada na raiz do JSON.\n");
+                printf("[Warn] Chave 'hostname' não encontrada na raiz do JSON.\n");
             }
 
             // 2. Instala pacotes via yay (está na raiz)
@@ -1001,10 +1004,10 @@ int main(int argc, char *argv[]) {
 
         if (chose == "1") {
             system("rm -rf /artex");
-            system("rm -rf /usr/local/bin/ArtexRecovery");
+            system("rm -rf /usr/local/bin/Artex");
             printf("[Artex] bye bye");
         } else if (chose == "2") {
-            system("rm -rf /usr/local/bin/ArtexRecovery");
+            system("rm -rf /usr/local/bin/Artex");
         } else {
             printf("nothing happened");
             return 0;
