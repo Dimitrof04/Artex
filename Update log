@@ -1,2 +1,6 @@
-1 - Trocar std::cin para getch();
-2 - Build com noconfirm root (-y)
+Update Command
+
+correcoes :
+helprint
+- rename fuction
+- adjust ArtexRecovery > Artex

@@ -915,7 +915,7 @@ public:
         }
 
         
-        if (updatesys != 'N' || updatesys != 'n') {
+        if (updatesys != 'N' && updatesys != 'n') {
             system("yay -Syu --noconfirm");
         }
 
@@ -941,7 +941,7 @@ public:
 // ==========================================
 // CLI ENTRY POINT
 // ==========================================
-void printUsage() {
+void HelpPrint() {
     printf("Artex Manager\n");
     printf("Options:\n");
     printf("--help    | -h       Show Help Painel\n");
@@ -956,12 +956,13 @@ void printUsage() {
     printf("--rb-json n          Go back N snapshots via JSON and run build\n");
     printf("--Ca                 Create / Compile a file or folder into .artex\n");
     printf("--Ra                 ExtrDact a .artex file\n");
+    printf("--upd                Update Artex");
     printf("--uninstall          Uninstall Artex\n");
 }
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        printUsage();
+        HelpPrint();
         return 1;
     }
 
@@ -974,10 +975,10 @@ int main(int argc, char *argv[]) {
     std::string command = argv[1];
     VersionManager manager;
     if (command == "--version") {
-        printf("[Artex] : version 1");
+        printf("[Artex] : version 1.1.0");
         return 0;
     } if (command == "--help" || command == "-h"){
-        printUsage();
+        HelpPrint();
         return 0;
     } if (command == "--lv-git") {
         manager.listVersionsGit();
@@ -991,12 +992,16 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         if (sudo) {
-            printf("[Artex] the file will be created by sudo, Do you really want to use sudo?");
+            printf("[Warn] the file will be created by sudo, Do you really want to use sudo?");
             auto reposta = getch();
             printf("%c\n", reposta);
+            if (reposta != 'Y' && reposta != 'y' ) {
+                return 0;
+            }
         }
         std::string targetPath = argv[2];
         ArtexBuilder::packToArtex(targetPath);
+        return 0;
     } if (command == "--Ra") {
         if (argc < 3) {
             printf("[Erro]: Informe o caminho para empacotar.\n");
@@ -1004,8 +1009,8 @@ int main(int argc, char *argv[]) {
         }
         std::string targetPath = argv[2];
         ArtexUnpacker::unpackFromArtex(targetPath);
+        return 0;
     }
-
     if (command == "--build") {
         if (argc >= 2 && std::string(argv[1]) == "-y") {
             Noconfirmroot = true;
@@ -1015,9 +1020,9 @@ int main(int argc, char *argv[]) {
 			manager.buildSystem();
         	return 0;
 		} else {
-            printf("[Error] Permission deniedr");
-            return 1; 
-        }
+		    printf("[Error] Permission deniedr");
+		    return 1;
+		}
     } if (command == "--save") {
         if (sudo) {
             std::string name = (argc >= 3) ? argv[2] : "";
@@ -1061,6 +1066,31 @@ int main(int argc, char *argv[]) {
             printf("[Error] Permission deniedr");
             return 1; 
         }
+    }
+    if (command == "--upd") {
+        printf("[1] - Use git pull  for update");
+        printf("[2] - Use git clone for update");
+        printf("[3] - Compiling Artex");
+        printf("[0] - return");
+
+        int option = 0;
+        try {
+            std::cin >> option;
+        } catch (...) {}
+
+        if (option == 1) {
+            system("git pull");
+        } else if (option == 2) {
+            system("rm -rf ~/artex && git clone https://github.com/Dimitrof04/Artex.git");
+        } else {
+            printf("nothing happened");
+            return 1;
+        }
+
+        system("cd ~/artex && g++ -std=c++17 main.cpp -I include -o Artex");
+
+        printf("[Artex] Successfully updated");
+        return 0;
     } if (command == "--uninstall") {
         if (sudo) {
             printf("[1] - Confirm \n");
