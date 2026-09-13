@@ -1,0 +1,2 @@
+1 - Trocar std::cin para getch();
+2 - Build com noconfirm root (-y)

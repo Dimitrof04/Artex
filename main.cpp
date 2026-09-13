@@ -1,19 +1,37 @@
-#include <iostream>
+// 1. Biblioteca Padrão do C++ (STL)
+#include <algorithm>
+#include <cstdlib>
+#include <cstdio>
+#include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <memory>
+#include <random>
+#include <set>
 #include <string>
 #include <vector>
-#include <random>
-#include <cstdlib>
-#include <ctime>
-#include <filesystem>
-#include <unistd.h>
-#include <cstdio>
-#include <nlohmann/json.hpp>
-#include <memory>
-#include <algorithm>
-#include <cstring>
-#include <set>
+#include <unistd.h>    // Necessário para setuid() e getuid()
 #include <stdio.h>
+#include <termios.h>
+
+char getch() {
+    char buf = 0;
+    struct termios old = {0};
+    if (tcgetattr(0, &old) < 0) perror("tcsetattr()");
+    old.c_lflag &= ~ICANON; // Desativa o modo canônico (esperar por enter)
+    old.c_lflag &= ~ECHO;   // Não mostra a tecla digitada na tela
+    old.c_cc[VMIN] = 1;
+    old.c_cc[VTIME] = 0;
+    if (tcsetattr(0, TCSANOW, &old) < 0) perror("tcsetattr ICANON");
+    if (read(0, &buf, 1) < 0) perror("read()");
+    old.c_lflag |= ICANON;
+    old.c_lflag |= ECHO;
+    if (tcsetattr(0, TCSAD_NOW, &old) < 0) perror("tcsetattr ~ICANON");
+    return buf;
+}
+
+// 2. Bibliotecas de Terceiros (External Dependencies)
+#include <nlohmann/json.hpp>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -887,9 +905,10 @@ public:
         char updatesys = 'Y';
         
         if (!Noconfirmroot) {
-            printf("[Artex] Do you want update your sys? [Y/n]");
+            printf("[Artex] Do you want to update your sys? [Y/n]");
             try {
-                std::cin >> updatesys;
+                updatesys = getch();
+                printf("%c\n", updatesys); // Imprime a tecla que o usuário apertou e pula linha
             } catch (...) {
                 updatesys = 'Y';
             }
@@ -901,15 +920,16 @@ public:
         }
 
         if (!Noconfirmroot) {
-            printf("[Artex] Do you want update your flatpak apps? [Y/n]");
+            printf("[Artex] Do you want to update your flatpak apps? [Y/n]");
             try {
-                std::cin >> updatesys;
+                updatesys = getch();
+                printf("%c\n", updatesys);
             } catch (...) {
                 updatesys = 'Y';
             }
         }
 
-        if (updatesys != 'N' || updatesys != 'n') {
+        if (updatesys != 'N' && updatesys != 'n') {
             system("flatpak update -y");
         }
 
@@ -925,7 +945,7 @@ void printUsage() {
     printf("Artex Manager\n");
     printf("Options:\n");
     printf("--help    | -h       Show Help Painel\n");
-    printf("--version | -v       Show ArtexRecovery version\n");
+    printf("--version | -v       Show Artex version\n");
     printf("--build              Save current state and apply JSONC configurations\n");
     printf("--build -y           --build + noconfirm\n");
     printf("--save [name]        Create a new snapshot and save history\n");
@@ -935,14 +955,20 @@ void printUsage() {
     printf("--rb-git n           Go back N commits in Git and run build\n");
     printf("--rb-json n          Go back N snapshots via JSON and run build\n");
     printf("--Ca                 Create / Compile a file or folder into .artex\n");
-    printf("--Ra                 Extract a .artex file\n");
-    printf("--uninstall          Uninstall ArtexRecovery\n");
+    printf("--Ra                 ExtrDact a .artex file\n");
+    printf("--uninstall          Uninstall Artex\n");
 }
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         printUsage();
         return 1;
+    }
+
+    bool sudo = (getuid() == 0);
+
+    if (sudo) {
+        printf("[Artex] running witg root (sudo)");
     }
 
     std::string command = argv[1];
@@ -964,6 +990,11 @@ int main(int argc, char *argv[]) {
             printf("[Erro]: Informe o caminho para empacotar.\n");
             return 1;
         }
+        if (sudo) {
+            printf("[Artex] the file will be created by sudo, Do you really want to use sudo?");
+            auto reposta = getch();
+            printf("%c\n", reposta);
+        }
         std::string targetPath = argv[2];
         ArtexBuilder::packToArtex(targetPath);
     } if (command == "--Ra") {
@@ -975,12 +1006,11 @@ int main(int argc, char *argv[]) {
         ArtexUnpacker::unpackFromArtex(targetPath);
     }
 
-    bool sudo = getuid() == 0;
-
     if (command == "--build") {
-        //if (argc < 3 && std::string(argv[2]) == "-y") {
-        //    Noconfirmroot = true;
-        //}
+        if (argc >= 2 && std::string(argv[1]) == "-y") {
+            Noconfirmroot = true;
+        }
+
     	if (sudo) {
 			manager.buildSystem();
         	return 0;
