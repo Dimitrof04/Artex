@@ -13,6 +13,7 @@
 #include <unistd.h>    // Necessário para setuid() e getuid()
 #include <stdio.h>
 #include <termios.h>
+#include "nlohmann/json.hpp"
 
 char getch() {
     char buf = 0;
@@ -26,12 +27,9 @@ char getch() {
     if (read(0, &buf, 1) < 0) perror("read()");
     old.c_lflag |= ICANON;
     old.c_lflag |= ECHO;
-    if (tcsetattr(0, TCSAD_NOW, &old) < 0) perror("tcsetattr ~ICANON");
+    if (tcsetattr(0, TCSANOW, &old) < 0) perror("tcsetattr ~ICANON");
     return buf;
 }
-
-// 2. Bibliotecas de Terceiros (External Dependencies)
-#include <nlohmann/json.hpp>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -975,7 +973,7 @@ int main(int argc, char *argv[]) {
     std::string command = argv[1];
     VersionManager manager;
     if (command == "--version") {
-        printf("[Artex] : version 1.1.0");
+        printf("[Artex] : version 1.1.1");
         return 0;
     } if (command == "--help" || command == "-h"){
         HelpPrint();
