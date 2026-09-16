@@ -5,9 +5,13 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Encontra a biblioteca instalada no sistema (Arch Linux)
-find_package(nlohmann_json REQUIRED)
 
-add_executable(meu_executavel main.cpp)
+add_executable(meu_executavel main.cpp
+        hpps/Includes.h++
+        hpps/ArtexBuilder.h++
+        hpps/VersionManager.h++
+        hpps/ArtexTokens.h++
+        hpps/json.hpp)
 
 # Linka a biblioteca de forma limpa
-target_link_libraries(meu_executavel PRIVATE nlohmann_json::nlohmann_json)
+#target_link_libraries(meu_executavel PRIVATE nlohmann_json::nlohmann_json)
