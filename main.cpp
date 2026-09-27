@@ -20,7 +20,7 @@ char getch() {
     struct termios old = {0};
     if (tcgetattr(0, &old) < 0) perror("tcsetattr()");
     old.c_lflag &= ~ICANON; // Desativa o modo canônico (esperar por enter)
-    old.c_lflag &= ~ECHO;   // Não mostra a tecla digitada na tela
+    old.c_lflag &= ~ECHO; // Não mostra a tecla digitada na tela
     old.c_cc[VMIN] = 1;
     old.c_cc[VTIME] = 0;
     if (tcsetattr(0, TCSANOW, &old) < 0) perror("tcsetattr ICANON");
@@ -645,7 +645,9 @@ private:
 
         if (!fs::exists(gitSavePath + "/.git")) {
             printf("[Artex] Inicializando repositório Git em %s...\n", gitSavePath.c_str());
-            std::system(("cd " + gitSavePath + " && git init && git config user.name 'Artex' && git config user.email 'artex@system.local'").c_str());
+            std::system(
+                ("cd " + gitSavePath +
+                 " && git init && git config user.name 'Artex' && git config user.email 'artex@system.local'").c_str());
         }
 
         if (!fs::exists(versionsFile)) {
@@ -901,7 +903,7 @@ public:
         }
 
         char updatesys = 'Y';
-        
+
         if (!Noconfirmroot) {
             printf("[Artex] Do you want to update your sys? [Y/n]");
             try {
@@ -912,7 +914,7 @@ public:
             }
         }
 
-        
+
         if (updatesys != 'N' && updatesys != 'n') {
             system("yay -Syu --noconfirm");
         }
@@ -958,6 +960,49 @@ void HelpPrint() {
     printf("--uninstall          Uninstall Artex\n");
 }
 
+enum class Command {
+    Version,
+    Help,
+    LvGit,
+    LvJson,
+    Ca,
+    Ra,
+    Build,
+    Save,
+    Rb,
+    RbGit,
+    RbJson,
+    Upd,
+    Uninstall,
+    Unknown
+};
+
+// Mapeamento de strings para o enum
+Command parseCommand(const std::string &cmd) {
+    static const std::unordered_map<std::string, Command> commandMap = {
+        {"--version", Command::Version},
+        {"--help", Command::Help},
+        {"-h", Command::Help},
+        {"--lv-git", Command::LvGit},
+        {"--lv-json", Command::LvJson},
+        {"--Ca", Command::Ca},
+        {"--Ra", Command::Ra},
+        {"--build", Command::Build},
+        {"--save", Command::Save},
+        {"--rb", Command::Rb},
+        {"--rb-git", Command::RbGit},
+        {"--rb-json", Command::RbJson},
+        {"--upd", Command::Upd},
+        {"--uninstall", Command::Uninstall}
+    };
+
+    auto it = commandMap.find(cmd);
+    if (it != commandMap.end()) {
+        return it->second;
+    }
+    return Command::Unknown;
+}
+
 int main(int argc, char *argv[]) {
     if (argc < 2) {
         HelpPrint();
@@ -967,156 +1012,172 @@ int main(int argc, char *argv[]) {
     bool sudo = (getuid() == 0);
 
     if (sudo) {
-        printf("[Artex] running witg root (sudo)");
+        printf("[Artex] running witg root (sudo)\n");
     }
 
-    std::string command = argv[1];
+    std::string commandStr = argv[1];
     VersionManager manager;
-    if (command == "--version") {
-        printf("[Artex] : version 1.1.1");
-        return 0;
-    } if (command == "--help" || command == "-h"){
-        HelpPrint();
-        return 0;
-    } if (command == "--lv-git") {
-        manager.listVersionsGit();
-        return 0;
-    } if (command == "--lv-json") {
-        manager.listVersionsJson();
-        return 0;
-    } if (command == "--Ca") {
-        if (argc < 3) {
-            printf("[Erro]: Informe o caminho para empacotar.\n");
-            return 1;
+
+    switch (parseCommand(commandStr)) {
+        case Command::Version:
+            printf("[Artex] : version 1.1.1\n");
+            return 0;
+
+        case Command::Help:
+            HelpPrint();
+            return 0;
+
+        case Command::LvGit:
+            manager.listVersionsGit();
+            return 0;
+
+        case Command::LvJson:
+            manager.listVersionsJson();
+            return 0;
+
+        case Command::Ca: {
+            if (argc < 3) {
+                printf("[Erro]: Informe o caminho para empacotar.\n");
+                return 1;
+            }
+            if (sudo) {
+                printf("[Warn] the file will be created by sudo, Do you really want to use sudo?");
+                auto reposta = getch();
+                printf("%c\n", reposta);
+                if (reposta != 'Y' && reposta != 'y') {
+                    return 0;
+                }
+            }
+            std::string targetPath = argv[2];
+            ArtexBuilder::packToArtex(targetPath);
+            return 0;
         }
-        if (sudo) {
-            printf("[Warn] the file will be created by sudo, Do you really want to use sudo?");
-            auto reposta = getch();
-            printf("%c\n", reposta);
-            if (reposta != 'Y' && reposta != 'y' ) {
+
+        case Command::Ra: {
+            if (argc < 3) {
+                printf("[Erro]: Informe o caminho para empacotar.\n");
+                return 1;
+            }
+            std::string targetPath = argv[2];
+            ArtexUnpacker::unpackFromArtex(targetPath);
+            return 0;
+        }
+
+        case Command::Build:
+            if (argc >= 2 && std::string(argv[1]) == "-y") {
+                Noconfirmroot = true;
+            }
+
+            if (sudo) {
+                manager.buildSystem();
                 return 0;
-            }
-        }
-        std::string targetPath = argv[2];
-        ArtexBuilder::packToArtex(targetPath);
-        return 0;
-    } if (command == "--Ra") {
-        if (argc < 3) {
-            printf("[Erro]: Informe o caminho para empacotar.\n");
-            return 1;
-        }
-        std::string targetPath = argv[2];
-        ArtexUnpacker::unpackFromArtex(targetPath);
-        return 0;
-    }
-    if (command == "--build") {
-        if (argc >= 2 && std::string(argv[1]) == "-y") {
-            Noconfirmroot = true;
-        }
-
-    	if (sudo) {
-			manager.buildSystem();
-        	return 0;
-		} else {
-		    printf("[Error] Permission deniedr");
-		    return 1;
-		}
-    } if (command == "--save") {
-        if (sudo) {
-            std::string name = (argc >= 3) ? argv[2] : "";
-            manager.createVersion(name);
-            return 0;
-        } else {
-            printf("[Error] Permission deniedr");
-            return 1; 
-        }
-    } if (command == "--rb") {
-        if (sudo) {
-            manager.rollbackLastBackup();
-            return 0;
-        } else {
-            printf("[Error] Permission deniedr");
-            return 1; 
-        }
-    } if (command == "--rb-git") {
-        if (sudo) {
-            if (argc < 3) {
-                printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-git 2\n");
-                return 1;
-            }
-            int index = std::atoi(argv[2]);
-            manager.rollbackGit(index);
-            return 0;
-        } else {
-            printf("[Error] Permission deniedr");
-            return 1; 
-        }
-    } if (command == "--rb-json") {
-        if (sudo){
-            if (argc < 3) {
-                printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-json 1\n");
-                return 1;
-            }
-            int index = std::atoi(argv[2]);
-            manager.rollbackJson(index);
-            return 0;
-        } else {
-            printf("[Error] Permission deniedr");
-            return 1; 
-        }
-    }
-    if (command == "--upd") {
-        printf("[1] - Use git pull  for update");
-        printf("[2] - Use git clone for update");
-        printf("[3] - Compiling Artex");
-        printf("[0] - return");
-
-        int option = 0;
-        try {
-            std::cin >> option;
-        } catch (...) {}
-
-        if (option == 1) {
-            system("git pull");
-        } else if (option == 2) {
-            system("rm -rf ~/artex && git clone https://github.com/Dimitrof04/Artex.git");
-        } else {
-            printf("nothing happened");
-            return 1;
-        }
-
-        system("cd ~/artex && g++ -std=c++17 main.cpp -I include -o Artex");
-
-        printf("[Artex] Successfully updated");
-        return 0;
-    } if (command == "--uninstall") {
-        if (sudo) {
-            printf("[1] - Confirm \n");
-            printf("[2] - Unistall but dont erase my data \n");
-            printf("[0] - exit \n");
-
-            std::string chose;
-            std::cin >> chose;
-
-            if (chose == "1") {
-                system("rm -rf /artex");
-                system("rm -rf /usr/local/bin/Artex");
-                printf("[Artex] bye bye");
-            } else if (chose == "2") {
-                system("rm -rf /usr/local/bin/Artex ");
             } else {
-                printf("nothing happened");
-                return 0;
+                printf("[Error] Permission denied\n");
+                return 1;
             }
+
+        case Command::Save:
+            if (sudo) {
+                std::string name = (argc >= 3) ? argv[2] : "";
+                manager.createVersion(name);
+                return 0;
+            } else {
+                printf("[Error] Permission denied\n");
+                return 1;
+            }
+
+        case Command::Rb:
+            if (sudo) {
+                manager.rollbackLastBackup();
+                return 0;
+            } else {
+                printf("[Error] Permission denied\n");
+                return 1;
+            }
+
+        case Command::RbGit:
+            if (sudo) {
+                if (argc < 3) {
+                    printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-git 2\n");
+                    return 1;
+                }
+                int index = std::atoi(argv[2]);
+                manager.rollbackGit(index);
+                return 0;
+            } else {
+                printf("[Error] Permission denied\n");
+                return 1;
+            }
+
+        case Command::RbJson:
+            if (sudo) {
+                if (argc < 3) {
+                    printf("[Erro] Argumento de índice ausente. Exemplo: ArtexRecovery --roolback-json 1\n");
+                    return 1;
+                }
+                int index = std::atoi(argv[2]);
+                manager.rollbackJson(index);
+                return 0;
+            } else {
+                printf("[Error] Permission denied\n");
+                return 1;
+            }
+
+        case Command::Upd: {
+            printf("[1] - Use git pull  for update\n");
+            printf("[2] - Use git clone for update\n");
+            printf("[3] - Compiling Artex\n");
+            printf("[0] - return\n");
+
+            int option = 0;
+            try {
+                std::cin >> option;
+            } catch (...) {
+            }
+
+            if (option == 1) {
+                system("git pull");
+            } else if (option == 2) {
+                system("rm -rf ~/artex && git clone https://github.com/Dimitrof04/Artex.git");
+            } else {
+                printf("nothing happened\n");
+                return 1;
+            }
+
+            system("cd ~/artex && g++ -std=c++17 main.cpp -I include -o Artex");
+            printf("[Artex] Successfully updated\n");
             return 0;
-        } else {
-            printf("[Error] Permission deniedr");
-            return 1; 
         }
+
+        case Command::Uninstall:
+            if (sudo) {
+                printf("[1] - Confirm \n");
+                printf("[2] - Unistall but dont erase my data \n");
+                printf("[0] - exit \n");
+
+                std::string chose;
+                std::cin >> chose;
+
+                if (chose == "1") {
+                    system("rm -rf /artex");
+                    system("rm -rf /usr/local/bin/Artex");
+                    printf("[Artex] bye bye\n");
+                } else if (chose == "2") {
+                    system("rm -rf /usr/local/bin/Artex ");
+                } else {
+                    printf("nothing happened\n");
+                    return 0;
+                }
+                return 0;
+            } else {
+                printf("[Error] Permission denied\n");
+                return 1;
+            }
+
+        case Command::Unknown:
+        default:
+            std::cout << "[Artex] unrecognized or invalid command " << commandStr << std::endl;
+            printf("for help use Artex --help\n");
+            return 0;
     }
-
-    std::cout << "[Artex] unrecognized or invalid command " << command << std::endl;
-    printf("for help use Artex --help\n");
-
-    return 0;
 }
