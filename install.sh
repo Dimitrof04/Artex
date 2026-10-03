@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 
-sudo pacman -Syu nlohmann-json
+sudo pacman -S gcc cmake
+
+sudo pacman -Syu
 
 sudo mkdir /artex
 cd /artex
 sudo mkdir gitsave
-sudo mkdir jsonsaves
 sudo mkdir localfiles
 sudo mkdir localsaves
 sudo mkdir lastBackup
@@ -15,15 +16,12 @@ cd gitsave
 mkdir config
 
 sudo git init
-sudo git config --global user.email "Artexautogit@gmail.com"
-sudo git config --global user.name "Artexxautogit"
+sudo git config --global user.email "Artexautogitroot@gmail.com"
+sudo git config --global user.name "Artexautogitroot"
 
 sudo cp ~/Artex/basefiles/* /artex/localfiles
 
 cd ~/Artex
-
-mkdir -p include/nlohmann
-curl -L https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp -o include/nlohmann/json.hpp
 
 g++ -std=c++17 main.cpp -I include -o Artex
 mv Artex /artex/Artex
