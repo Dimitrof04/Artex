@@ -10,10 +10,11 @@
 #include <set>
 #include <string>
 #include <vector>
-#include <unistd.h>    // Necessário para setuid() e getuid()
+#include <unistd.h>
 #include <stdio.h>
 #include <termios.h>
-#include "nlohmann/json.hpp"
+#include <sstream>
+#include <unordered_map>
 
 char getch() {
     char buf = 0;
@@ -32,594 +33,686 @@ char getch() {
 }
 
 namespace fs = std::filesystem;
-using json = nlohmann::json;
+
+namespace IniParser {
+
+    // Estrutura principal: [Secao][Chave] = Valor
+    using IniData = std::unordered_map<std::string, std::unordered_map<std::string, std::string>>;
+
+    namespace Internal {
+        // Remove espaços do início e do fim
+        inline std::string trim(const std::string& str) {
+            size_t first = str.find_first_not_of(" \t\r\n");
+            if (first == std::string::npos) return "";
+            size_t last = str.find_last_not_of(" \t\r\n");
+            return str.substr(first, (last - first + 1));
+        }
+
+        // Cache global na memória: [CaminhoDoArquivo] -> Data
+        inline std::unordered_map<std::string, IniData> g_fileCache;
+    }
+
+    // Limpa o cache se algum arquivo for modificado em tempo de execução
+    inline void ClearCache(const std::string& filepath = "") {
+        if (filepath.empty()) {
+            Internal::g_fileCache.clear();
+        } else {
+            Internal::g_fileCache.erase(filepath);
+        }
+    }
+
+    // Carrega o arquivo usando Cache na memória
+    inline IniData LoadFromFile(const std::string& filepath, bool forceReload = false) {
+        // Se já estiver no cache e não for forçado o recarregamento, retorna direto
+        if (!forceReload) {
+            auto cacheIt = Internal::g_fileCache.find(filepath);
+            if (cacheIt != Internal::g_fileCache.end()) {
+                return cacheIt->second;
+            }
+        }
+
+        IniData ini;
+        std::ifstream file(filepath);
+
+        if (!file.is_open()) {
+            std::cerr << "[IniParser Error] Nao foi possivel abrir o arquivo: " << filepath << std::endl;
+            return ini;
+        }
+
+        std::string line;
+        std::string currentSection = "";
+
+        while (std::getline(file, line)) {
+            line = Internal::trim(line);
+
+            if (line.empty() || line[0] == ';' || line[0] == '#') {
+                continue;
+            }
+
+            if (line.front() == '[' && line.back() == ']') {
+                currentSection = Internal::trim(line.substr(1, line.size() - 2));
+            } else {
+                size_t delimiterPos = line.find('=');
+                if (delimiterPos != std::string::npos) {
+                    std::string key = Internal::trim(line.substr(0, delimiterPos));
+                    std::string value = Internal::trim(line.substr(delimiterPos + 1));
+
+                    if (!key.empty()) {
+                        ini[currentSection][key] = value;
+                    }
+                }
+            }
+        }
+
+        file.close();
+
+        // Salva no cache antes de retornar
+        Internal::g_fileCache[filepath] = ini;
+        return ini;
+    }
+
+    // GetValue genérico para tipos escalares (int, float, double, bool)
+    template <typename T>
+    inline T GetValue(const IniData& ini, const std::string& section, const std::string& key, T defaultValue = T()) {
+        auto secIt = ini.find(section);
+        if (secIt != ini.end()) {
+            auto keyIt = secIt->second.find(key);
+            if (keyIt != secIt->second.end()) {
+                std::stringstream ss(keyIt->second);
+                T result;
+                if (ss >> result) return result;
+
+                if constexpr (std::is_same_v<T, bool>) {
+                    std::string valLower = keyIt->second;
+                    std::transform(valLower.begin(), valLower.end(), valLower.begin(), ::tolower);
+                    if (valLower == "true" || valLower == "1") return true;
+                    if (valLower == "false" || valLower == "0") return false;
+                }
+            }
+        }
+        return defaultValue;
+    }
+
+    // Sobrecarga para std::string
+    template <>
+    inline std::string GetValue<std::string>(const IniData& ini, const std::string& section, const std::string& key, std::string defaultValue) {
+        auto secIt = ini.find(section);
+        if (secIt != ini.end()) {
+            auto keyIt = secIt->second.find(key);
+            if (keyIt != secIt->second.end()) {
+                return keyIt->second;
+            }
+        }
+        return defaultValue;
+    }
+
+    // Função especializada para ler Listas de qualquer tipo (std::vector<T>)
+    template <typename T>
+    inline std::vector<T> GetList(const IniData& ini, const std::string& section, const std::string& key, char delimiter = ',') {
+        std::vector<T> result;
+        std::string rawList = GetValue<std::string>(ini, section, key, "");
+
+        if (rawList.empty()) return result;
+
+        std::stringstream ss(rawList);
+        std::string itemStr;
+
+        while (std::getline(ss, itemStr, delimiter)) {
+            itemStr = Internal::trim(itemStr);
+            if (itemStr.empty()) continue;
+
+            if constexpr (std::is_same_v<T, std::string>) {
+                result.push_back(itemStr);
+            } else {
+                std::stringstream itemSS(itemStr);
+                T value;
+                if (itemSS >> value) {
+                    result.push_back(value);
+                }
+            }
+        }
+
+        return result;
+    }
+}
 
 // =====================================
 // Artex Builder                       |
 // =====================================
+namespace ArtexFileBuilder {
+    class ArtexToken {
+    private:
+        std::string command; // Ex: "class ", "int "
+        std::string ArtexFormation; // Ex: "CC", "VI"
 
-class ArtexToken {
-private:
-    std::string command; // Ex: "class ", "int "
-    std::string ArtexFormation; // Ex: "CC", "VI"
-
-public:
-    ArtexToken(std::string command, std::string ArtexFormation) : command(command), ArtexFormation(ArtexFormation) {
-    }
-
-    // Getters: permitem ler os dados privados
-    std::string getCommand() const { return command; }
-    std::string getFormation() const { return ArtexFormation; }
-};
-
-// Tabela única centralizada de Tokens
-inline const std::vector<ArtexToken> artexTokens = {
-    // artex
-    {"FOLDER", "D"},
-    {"FILE", "F"},
-    // global
-    {"class ", "CC"},
-    {"public:", "CP"},
-    {"private:", "CI"},
-    {"self", "Cs"},
-    {"this", "Ct"},
-    {"int ", "VI"},
-    {"float ", "VF"},
-    {"double ", "VD"},
-    {"string ", "VS"},
-    {"char", "VC"},
-    {"return ", "RE"},
-    {"for ", "FF"},
-    {"while ", "FW"},
-    {"case ", "FC"},
-    {"if ", "FI"},
-    {"else", "FE"},
-    {"then", "TH"},
-    {"const", "TC"},
-    {"static", "TS"},
-    {"main", "TM"},
-    {"void", "TV"},
-    {"from", "TF"},
-    {"import", "TI"},
-    // javascript (web) 
-    {"let", "wl"},
-    // lua
-    {"local", "Ll"},
-    {"fuction", "Lf"},
-    {"require", "Lr"},
-    // cpp / c#
-    {"#include", "CpI"},
-    {"using", "CpU"},
-    {"inline", "CpI"},
-    {"printf", "CpP"},
-    {"namespace", "CpN"},
-    {"std::", "Cps"},
-    // linux
-    {"sudo", "Ls"},
-    {"mkdir", "Lm"},
-    {"touch", "Lt"},
-    // arch
-    {"pacman", "LAp"}
-};
-
-// Função auxiliar para buscar a formação de um token por nome (ex: "FOLDER" -> "D")
-inline std::string getTokenFormation(const std::string &name) {
-    for (const auto &token: artexTokens) {
-        if (token.getCommand() == name) {
-            return token.getFormation();
-        }
-    }
-    return "";
-}
-
-static const std::string base64_chars =
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-        "abcdefghijklmnopqrstuvwxyz"
-        "0123456789+/";
-
-std::string base64_encode(const std::string &in) {
-    std::string out;
-    int val = 0, valb = -6;
-    for (unsigned char c: in) {
-        val = (val << 8) + c;
-        valb += 8;
-        while (valb >= 0) {
-            out.push_back(base64_chars[(val >> valb) & 0x3F]);
-            valb -= 6;
-        }
-    }
-    if (valb > -6) out.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
-    while (out.size() % 4) out.push_back('=');
-    return out;
-}
-
-std::string base64_decode(const std::string &in) {
-    std::string out;
-    std::vector<int> T(256, -1);
-    for (int i = 0; i < 64; i++) T[base64_chars[i]] = i;
-
-    int val = 0, valb = -8;
-    for (unsigned char c: in) {
-        if (T[c] == -1) break;
-        val = (val << 8) + T[c];
-        valb += 6;
-        if (valb >= 0) {
-            out.push_back(char((val >> valb) & 0xFF));
-            valb -= 8;
-        }
-    }
-    return out;
-}
-
-// Helper para gerenciar Escape de caracteres
-// System Escaper
-class ArtexEscaper {
-public:
-    static std::string encodeContent(const std::string &input) {
-        std::string out = "";
-
-        // 1. Escape de caracteres de controle
-        for (char c: input) {
-            if (c == '#') out += "##";
-            else if (c == '$') out += "$$";
-            else if (c == '`') out += "``";
-            else out += c;
+    public:
+        ArtexToken(std::string command, std::string ArtexFormation) : command(command), ArtexFormation(ArtexFormation) {
         }
 
-        // Função Lambda auxiliar de substituição
-        auto replaceAll = [](std::string &str, const std::string &from, const std::string &to) {
-            size_t startPos = 0;
-            while ((startPos = str.find(from, startPos)) != std::string::npos) {
-                str.replace(startPos, from.length(), to);
-                startPos += to.length();
-            }
-        };
+        // Getters: permitem ler os dados privados
+        std::string getCommand() const { return command; }
+        std::string getFormation() const { return ArtexFormation; }
+    };
 
-        // 2. Loop Automático: substitui todas as palavras-chave cadastradas pelos seus tokens!
+    // Tabela única centralizada de Tokens
+    inline const std::vector<ArtexToken> artexTokens = {
+        // artex
+        {"FOLDER", "D"},
+        {"FILE", "F"},
+        // global
+        {"class ", "CC"},
+        {"public:", "CP"},
+        {"private:", "CI"},
+        {"self", "Cs"},
+        {"this", "Ct"},
+        {"int ", "VI"},
+        {"float ", "VF"},
+        {"double ", "VD"},
+        {"string ", "VS"},
+        {"char", "VC"},
+        {"return ", "RE"},
+        {"for ", "FF"},
+        {"while ", "FW"},
+        {"case ", "FC"},
+        {"if ", "FI"},
+        {"else", "FE"},
+        {"then", "TH"},
+        {"const", "TC"},
+        {"static", "TS"},
+        {"main", "TM"},
+        {"void", "TV"},
+        {"from", "TF"},
+        {"import", "TI"},
+        // javascript (web)
+        {"let", "wl"},
+        // lua
+        {"local", "Ll"},
+        {"fuction", "Lf"},
+        {"require", "Lr"},
+        // cpp / c#
+        {"#include", "CpI"},
+        {"using", "CpU"},
+        {"inline", "CpI"},
+        {"printf", "CpP"},
+        {"namespace", "CpN"},
+        {"std::", "Cps"},
+        // linux
+        {"sudo", "Ls"},
+        {"mkdir", "Lm"},
+        {"touch", "Lt"},
+        // arch
+        {"pacman", "LAp"}
+    };
+
+    // Função auxiliar para buscar a formação de um token por nome (ex: "FOLDER" -> "D")
+    inline std::string getTokenFormation(const std::string &name) {
         for (const auto &token: artexTokens) {
-            // Ignora tokens de sistema (pasta e arquivo)
-            if (token.getCommand() == "FOLDER" || token.getCommand() == "FILE") continue;
-
-            replaceAll(out, token.getCommand(), "$" + token.getFormation() + "`");
+            if (token.getCommand() == name) {
+                return token.getFormation();
+            }
         }
+        return "";
+    }
 
+    static const std::string base64_chars =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "abcdefghijklmnopqrstuvwxyz"
+            "0123456789+/";
+
+    std::string base64_encode(const std::string &in) {
+        std::string out;
+        int val = 0, valb = -6;
+        for (unsigned char c: in) {
+            val = (val << 8) + c;
+            valb += 8;
+            while (valb >= 0) {
+                out.push_back(base64_chars[(val >> valb) & 0x3F]);
+                valb -= 6;
+            }
+        }
+        if (valb > -6) out.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
+        while (out.size() % 4) out.push_back('=');
         return out;
     }
 
-    static std::string decodeContent(const std::string &input) {
-        std::string out = input;
+    std::string base64_decode(const std::string &in) {
+        std::string out;
+        std::vector<int> T(256, -1);
+        for (int i = 0; i < 64; i++) T[base64_chars[i]] = i;
 
-        auto replaceAll = [](std::string &str, const std::string &from, const std::string &to) {
-            size_t startPos = 0;
-            while ((startPos = str.find(from, startPos)) != std::string::npos) {
-                str.replace(startPos, from.length(), to);
-                startPos += to.length();
+        int val = 0, valb = -8;
+        for (unsigned char c: in) {
+            if (T[c] == -1) break;
+            val = (val << 8) + T[c];
+            valb += 6;
+            if (valb >= 0) {
+                out.push_back(char((val >> valb) & 0xFF));
+                valb -= 8;
             }
-        };
-
-        // 1. Loop Automático: Reverte todos os tokens para as palavras-chave originais!
-        for (const auto &token: artexTokens) {
-            if (token.getCommand() == "FOLDER" || token.getCommand() == "FILE") continue;
-
-            replaceAll(out, "$" + token.getFormation() + "`", token.getCommand());
-        }
-
-        // 2. Reverte os escapes de caracteres especiais
-        std::string unescaped = "";
-        for (size_t i = 0; i < out.length(); ++i) {
-            if (i + 1 < out.length()) {
-                if (out[i] == '#' && out[i + 1] == '#') {
-                    unescaped += '#';
-                    i++;
-                    continue;
-                }
-                if (out[i] == '$' && out[i + 1] == '$') {
-                    unescaped += '$';
-                    i++;
-                    continue;
-                }
-                if (out[i] == '`' && out[i + 1] == '`') {
-                    unescaped += '`';
-                    i++;
-                    continue;
-                }
-            }
-            unescaped += out[i];
-        }
-
-        return unescaped;
-    }
-
-    static std::string escape(const std::string &input) {
-        std::string out = "";
-        for (char c: input) {
-            if (c == '#') out += "##";
-            else if (c == '$') out += "$$";
-            else if (c == '`') out += "``";
-            else out += c;
         }
         return out;
     }
-};
 
-// ==========================================
-// Estruturas de Dados
-// ==========================================
+    // Helper para gerenciar Escape de caracteres
+    // System Escaper
+    class ArtexEscaper {
+    public:
+        static std::string encodeContent(const std::string &input) {
+            std::string out = "";
 
-class File {
-private:
-    std::string fileName;
-    std::string typeFile; // ex: txt, cpp, json
-    std::string content;
-    std::string parent;
+            // 1. Escape de caracteres de controle
+            for (char c: input) {
+                if (c == '#') out += "##";
+                else if (c == '$') out += "$$";
+                else if (c == '`') out += "``";
+                else out += c;
+            }
 
-public:
-    File(std::string name, std::string type, std::string content, std::string parent = "")
-        : fileName(name), typeFile(type), content(content), parent(parent) {
-    }
+            // Função Lambda auxiliar de substituição
+            auto replaceAll = [](std::string &str, const std::string &from, const std::string &to) {
+                size_t startPos = 0;
+                while ((startPos = str.find(from, startPos)) != std::string::npos) {
+                    str.replace(startPos, from.length(), to);
+                    startPos += to.length();
+                }
+            };
 
-    std::string getName() const { return fileName; }
-    std::string getType() const { return typeFile; }
-    std::string getContent() const { return content; }
-    std::string getParent() const { return parent; }
+            // 2. Loop Automático: substitui todas as palavras-chave cadastradas pelos seus tokens!
+            for (const auto &token: artexTokens) {
+                // Ignora tokens de sistema (pasta e arquivo)
+                if (token.getCommand() == "FOLDER" || token.getCommand() == "FILE") continue;
 
-    void setContent(const std::string &newContent) { content = newContent; }
-    void setParent(const std::string &newParent) { parent = newParent; }
-    void rename(const std::string &newName) { fileName = newName; }
+                replaceAll(out, token.getCommand(), "$" + token.getFormation() + "`");
+            }
 
-    // Serializa o arquivo para formato .artex
-    // Serializa o arquivo para formato .artex
-    std::string serialize() const {
-        std::string escapedName = ArtexEscaper::escape(fileName);
-        std::string escapedType = ArtexEscaper::escape(typeFile);
-
-        // MUDANÇA AQUI: troca as palavras-chave (int, class, etc.) pelos tokens $VI`, $CC`, etc.
-        std::string encodedContent = ArtexEscaper::encodeContent(content);
-
-        std::string escapedParent = ArtexEscaper::escape(parent);
-
-        return "$" + getTokenFormation("FILE") + "`" + escapedName + "|" + escapedType + "|\n" + encodedContent + "|" +
-               escapedParent + "`\n";
-    }
-};
-
-class BuilderFolder {
-private:
-    std::string folderName;
-    int folderID;
-    int parentID;
-
-    std::vector<BuilderFolder> subFolders;
-    std::vector<File> files;
-
-public:
-    BuilderFolder(std::string folderName, int folderID, int parentID = -1)
-        : folderName(folderName), folderID(folderID), parentID(parentID) {
-    }
-
-    void rename(std::string name) { folderName = name; }
-    int getID() const { return folderID; }
-    int getParentID() const { return parentID; }
-    std::string getName() const { return folderName; }
-
-    void addSubFolder(const BuilderFolder &folder) { subFolders.push_back(folder); }
-    void addFile(const File &file) { files.push_back(file); }
-
-    std::string serialize() const {
-        std::ostringstream ss;
-        std::string escapedName = ArtexEscaper::escape(folderName);
-
-        // Header da pasta: $D`id|parent_id|nome`
-        ss << "$" << getTokenFormation("FOLDER") << "`" << folderID << "|" << parentID << "|" << escapedName << "`\n";
-        for (const auto &file: files) {
-            ss << "  " << file.serialize() << "\n";
+            return out;
         }
 
-        for (const auto &folder: subFolders) {
-            ss << folder.serialize();
+        static std::string decodeContent(const std::string &input) {
+            std::string out = input;
+
+            auto replaceAll = [](std::string &str, const std::string &from, const std::string &to) {
+                size_t startPos = 0;
+                while ((startPos = str.find(from, startPos)) != std::string::npos) {
+                    str.replace(startPos, from.length(), to);
+                    startPos += to.length();
+                }
+            };
+
+            // 1. Loop Automático: Reverte todos os tokens para as palavras-chave originais!
+            for (const auto &token: artexTokens) {
+                if (token.getCommand() == "FOLDER" || token.getCommand() == "FILE") continue;
+
+                replaceAll(out, "$" + token.getFormation() + "`", token.getCommand());
+            }
+
+            // 2. Reverte os escapes de caracteres especiais
+            std::string unescaped = "";
+            for (size_t i = 0; i < out.length(); ++i) {
+                if (i + 1 < out.length()) {
+                    if (out[i] == '#' && out[i + 1] == '#') {
+                        unescaped += '#';
+                        i++;
+                        continue;
+                    }
+                    if (out[i] == '$' && out[i + 1] == '$') {
+                        unescaped += '$';
+                        i++;
+                        continue;
+                    }
+                    if (out[i] == '`' && out[i + 1] == '`') {
+                        unescaped += '`';
+                        i++;
+                        continue;
+                    }
+                }
+                unescaped += out[i];
+            }
+
+            return unescaped;
         }
 
-        return ss.str();
-    }
-};
+        static std::string escape(const std::string &input) {
+            std::string out = "";
+            for (char c: input) {
+                if (c == '#') out += "##";
+                else if (c == '$') out += "$$";
+                else if (c == '`') out += "``";
+                else out += c;
+            }
+            return out;
+        }
+    };
 
-// ==========================================
-// Empacotador Automático de Pastas Reais
-// ==========================================
-class ArtexBuilder {
-private:
-    inline static int idCounter;
+    // ==========================================
+    // Estruturas de Dados
+    // ==========================================
 
-    // Função auxiliar para verificar se a extensão deve ser ignorada
-    static bool isIgnoredExtension(const std::string &ext) {
-        // Converte a extensão para minúsculas
-        std::string lowerExt = ext;
-        std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::tolower);
+    class File {
+    private:
+        std::string fileName;
+        std::string typeFile; // ex: txt, cpp, json
+        std::string content;
+        std::string parent;
 
-        // Lista de extensões binárias/compiladas perigosas
-        static const std::set<std::string> ignoredExtensions = {
-            "exe", "dll", "so", "dylib", "a", "lib", "o", "obj",
-            "out", "bin", "class", "pyc", "pyd", "elf", "sh"
-        };
+    public:
+        File(std::string name, std::string type, std::string content, std::string parent = "")
+            : fileName(name), typeFile(type), content(content), parent(parent) {
+        }
 
-        return ignoredExtensions.count(lowerExt) > 0;
-    }
+        std::string getName() const { return fileName; }
+        std::string getType() const { return typeFile; }
+        std::string getContent() const { return content; }
+        std::string getParent() const { return parent; }
 
-    static void scanDirectoryRecursively(const fs::path &basePath, const fs::path &currentPath,
-                                         BuilderFolder &currentFolder) {
-        for (const auto &entry: fs::directory_iterator(currentPath)) {
-            // Ignora o próprio arquivo .artex
-            if (entry.path().extension() == ".artex") continue;
+        void setContent(const std::string &newContent) { content = newContent; }
+        void setParent(const std::string &newParent) { parent = newParent; }
+        void rename(const std::string &newName) { fileName = newName; }
 
-            if (fs::is_directory(entry)) {
-                int newID = ++idCounter;
-                std::string relPath = fs::relative(entry.path(), basePath).string();
-                BuilderFolder subFolder(relPath, newID, currentFolder.getID());
+        // Serializa o arquivo para formato .artex
+        // Serializa o arquivo para formato .artex
+        std::string serialize() const {
+            std::string escapedName = ArtexEscaper::escape(fileName);
+            std::string escapedType = ArtexEscaper::escape(typeFile);
 
-                scanDirectoryRecursively(basePath, entry.path(), subFolder);
+            // MUDANÇA AQUI: troca as palavras-chave (int, class, etc.) pelos tokens $VI`, $CC`, etc.
+            std::string encodedContent = ArtexEscaper::encodeContent(content);
 
-                // Só adiciona a pasta se ela contiver arquivos ou subpastas
-                currentFolder.addSubFolder(subFolder);
-            } else if (fs::is_regular_file(entry)) {
-                std::string ext = entry.path().extension().string();
+            std::string escapedParent = ArtexEscaper::escape(parent);
+
+            return "$" + getTokenFormation("FILE") + "`" + escapedName + "|" + escapedType + "|\n" + encodedContent +
+                   "|" +
+                   escapedParent + "`\n";
+        }
+    };
+
+    class BuilderFolder {
+    private:
+        std::string folderName;
+        int folderID;
+        int parentID;
+
+        std::vector<BuilderFolder> subFolders;
+        std::vector<File> files;
+
+    public:
+        BuilderFolder(std::string folderName, int folderID, int parentID = -1)
+            : folderName(folderName), folderID(folderID), parentID(parentID) {
+        }
+
+        void rename(std::string name) { folderName = name; }
+        int getID() const { return folderID; }
+        int getParentID() const { return parentID; }
+        std::string getName() const { return folderName; }
+
+        void addSubFolder(const BuilderFolder &folder) { subFolders.push_back(folder); }
+        void addFile(const File &file) { files.push_back(file); }
+
+        std::string serialize() const {
+            std::ostringstream ss;
+            std::string escapedName = ArtexEscaper::escape(folderName);
+
+            // Header da pasta: $D`id|parent_id|nome`
+            ss << "$" << getTokenFormation("FOLDER") << "`" << folderID << "|" << parentID << "|" << escapedName <<
+                    "`\n";
+            for (const auto &file: files) {
+                ss << "  " << file.serialize() << "\n";
+            }
+
+            for (const auto &folder: subFolders) {
+                ss << folder.serialize();
+            }
+
+            return ss.str();
+        }
+    };
+
+    // ==========================================
+    // Empacotador Automático de Pastas Reais
+    // ==========================================
+    class ArtexBuilder {
+    private:
+        inline static int idCounter;
+
+        // Função auxiliar para verificar se a extensão deve ser ignorada
+        static bool isIgnoredExtension(const std::string &ext) {
+            // Converte a extensão para minúsculas
+            std::string lowerExt = ext;
+            std::transform(lowerExt.begin(), lowerExt.end(), lowerExt.begin(), ::tolower);
+
+            // Lista de extensões binárias/compiladas perigosas
+            static const std::set<std::string> ignoredExtensions = {
+                "exe", "dll", "so", "dylib", "a", "lib", "o", "obj",
+                "out", "bin", "class", "pyc", "pyd", "elf", "sh"
+            };
+
+            return ignoredExtensions.count(lowerExt) > 0;
+        }
+
+        static void scanDirectoryRecursively(const fs::path &basePath, const fs::path &currentPath,
+                                             BuilderFolder &currentFolder) {
+            for (const auto &entry: fs::directory_iterator(currentPath)) {
+                // Ignora o próprio arquivo .artex
+                if (entry.path().extension() == ".artex") continue;
+
+                if (fs::is_directory(entry)) {
+                    int newID = ++idCounter;
+                    std::string relPath = fs::relative(entry.path(), basePath).string();
+                    BuilderFolder subFolder(relPath, newID, currentFolder.getID());
+
+                    scanDirectoryRecursively(basePath, entry.path(), subFolder);
+
+                    // Só adiciona a pasta se ela contiver arquivos ou subpastas
+                    currentFolder.addSubFolder(subFolder);
+                } else if (fs::is_regular_file(entry)) {
+                    std::string ext = entry.path().extension().string();
+                    if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
+
+                    // FILTRO: Ignora se for um arquivo compilado/binário
+                    if (isIgnoredExtension(ext)) {
+                        std::cout << "[IGNORADO BINÁRIO] " << entry.path().filename().string() << std::endl;
+                        continue;
+                    }
+
+                    std::string filename = entry.path().stem().string();
+
+                    std::ifstream inFile(entry.path(), std::ios::in | std::ios::binary);
+                    std::string content = "";
+                    if (inFile) {
+                        content = std::string((std::istreambuf_iterator<char>(inFile)),
+                                              std::istreambuf_iterator<char>());
+                    }
+
+                    std::string relParent = fs::relative(entry.path().parent_path(), basePath).string();
+                    if (relParent == ".") relParent = "root";
+
+                    File fileObj(filename, ext, content, relParent);
+                    currentFolder.addFile(fileObj);
+                }
+            }
+        }
+
+    public:
+        static bool packToArtex(const std::string &inputPathStr) {
+            fs::path inputPath(inputPathStr);
+            if (!fs::exists(inputPath)) {
+                std::cerr << "[ERRO] O caminho especificado nao existe: " << inputPathStr << std::endl;
+                return false;
+            }
+
+            idCounter = 0;
+            fs::path outputPath = inputPath;
+
+            if (fs::is_directory(inputPath)) {
+                outputPath += ".artex";
+                BuilderFolder rootFolder(inputPath.filename().string(), idCounter, -1);
+                scanDirectoryRecursively(inputPath, inputPath, rootFolder);
+
+                std::ofstream outFile(outputPath, std::ios::binary);
+                if (!outFile.is_open()) return false;
+                outFile << "# Artex Archive - Generated automatically\n";
+                outFile << rootFolder.serialize();
+                outFile.close();
+            } else {
+                std::string ext = inputPath.extension().string();
                 if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
 
-                // FILTRO: Ignora se for um arquivo compilado/binário
+                // Verifica se o arquivo único é binário
                 if (isIgnoredExtension(ext)) {
-                    std::cout << "[IGNORADO BINÁRIO] " << entry.path().filename().string() << std::endl;
-                    continue;
+                    std::cerr << "[ERRO] Arquivos compilados/binarios nao sao permitidos: " << inputPathStr <<
+                            std::endl;
+                    return false;
                 }
 
-                std::string filename = entry.path().stem().string();
+                outputPath.replace_extension(".artex");
 
-                std::ifstream inFile(entry.path(), std::ios::in | std::ios::binary);
+                std::ifstream inFile(inputPath, std::ios::in | std::ios::binary);
                 std::string content = "";
                 if (inFile) {
                     content = std::string((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
                 }
 
-                std::string relParent = fs::relative(entry.path().parent_path(), basePath).string();
-                if (relParent == ".") relParent = "root";
+                File singleFile(inputPath.stem().string(), ext, content, "SINGLE_FILE");
 
-                File fileObj(filename, ext, content, relParent);
-                currentFolder.addFile(fileObj);
+                std::ofstream outFile(outputPath, std::ios::binary);
+                if (!outFile.is_open()) return false;
+                outFile << "# Artex Single File\n";
+                outFile << singleFile.serialize();
+                outFile.close();
             }
+
+            std::cout << "[ARTEX] Arquivo gerado com sucesso em: " << outputPath.string() << std::endl;
+            return true;
         }
-    }
+    };
 
-public:
-    static bool packToArtex(const std::string &inputPathStr) {
-        fs::path inputPath(inputPathStr);
-        if (!fs::exists(inputPath)) {
-            std::cerr << "[ERRO] O caminho especificado nao existe: " << inputPathStr << std::endl;
-            return false;
-        }
-
-        idCounter = 0;
-        fs::path outputPath = inputPath;
-
-        if (fs::is_directory(inputPath)) {
-            outputPath += ".artex";
-            BuilderFolder rootFolder(inputPath.filename().string(), idCounter, -1);
-            scanDirectoryRecursively(inputPath, inputPath, rootFolder);
-
-            std::ofstream outFile(outputPath, std::ios::binary);
-            if (!outFile.is_open()) return false;
-            outFile << "# Artex Archive - Generated automatically\n";
-            outFile << rootFolder.serialize();
-            outFile.close();
-        } else {
-            std::string ext = inputPath.extension().string();
-            if (!ext.empty() && ext[0] == '.') ext = ext.substr(1);
-
-            // Verifica se o arquivo único é binário
-            if (isIgnoredExtension(ext)) {
-                std::cerr << "[ERRO] Arquivos compilados/binarios nao sao permitidos: " << inputPathStr << std::endl;
+    class ArtexUnpacker {
+    public:
+        static bool unpackFromArtex(const std::string &artexFilePath) {
+            fs::path artexPath(artexFilePath);
+            if (!fs::exists(artexPath) || artexPath.extension() != ".artex") {
+                std::cerr << "[ERRO] Arquivo .artex invalido ou nao encontrado.\n";
                 return false;
             }
 
-            outputPath.replace_extension(".artex");
+            std::ifstream inFile(artexPath, std::ios::in | std::ios::binary);
+            if (!inFile.is_open()) return false;
 
-            std::ifstream inFile(inputPath, std::ios::in | std::ios::binary);
-            std::string content = "";
-            if (inFile) {
-                content = std::string((std::istreambuf_iterator<char>(inFile)), std::istreambuf_iterator<char>());
+            std::string fullContent((std::istreambuf_iterator<char>(inFile)),
+                                    std::istreambuf_iterator<char>());
+            inFile.close();
+
+            std::string folderToken = "$" + getTokenFormation("FOLDER") + "`";
+            std::string fileToken = "$" + getTokenFormation("FILE") + "`";
+
+            // Verifica se é um arquivo único ou pasta
+            bool isSingleFileMode = (fullContent.find(folderToken) == std::string::npos);
+
+            fs::path outputDir = artexPath.parent_path();
+            if (!isSingleFileMode) {
+                outputDir /= artexPath.stem(); // Para pastas, cria o diretório com o nome do projeto
+                fs::create_directories(outputDir);
             }
 
-            File singleFile(inputPath.stem().string(), ext, content, "SINGLE_FILE");
+            const int larguraBarra = 20;
 
-            std::ofstream outFile(outputPath, std::ios::binary);
-            if (!outFile.is_open()) return false;
-            outFile << "# Artex Single File\n";
-            outFile << singleFile.serialize();
-            outFile.close();
-        }
+            size_t totalBytes = fullContent.length();
+            size_t pos = 0;
+            size_t ultimoProgressoInt = 0; // Evita redesenhar a barra se a porcentagem não mudou
 
-        std::cout << "[ARTEX] Arquivo gerado com sucesso em: " << outputPath.string() << std::endl;
-        return true;
-    }
-};
+            while (pos < totalBytes) {
+                // 1. Processa Pastas ($D`id|parent|caminho_relativo`)
+                if (!isSingleFileMode && fullContent.compare(pos, folderToken.length(), folderToken) == 0) {
+                    pos += folderToken.length();
+                    size_t endTag = fullContent.find('`', pos);
+                    if (endTag == std::string::npos) break;
 
-class ArtexUnpacker {
-public:
-    static bool unpackFromArtex(const std::string &artexFilePath) {
-        fs::path artexPath(artexFilePath);
-        if (!fs::exists(artexPath) || artexPath.extension() != ".artex") {
-            std::cerr << "[ERRO] Arquivo .artex invalido ou nao encontrado.\n";
-            return false;
-        }
+                    std::string header = fullContent.substr(pos, endTag - pos);
+                    pos = endTag + 1;
 
-        std::ifstream inFile(artexPath, std::ios::in | std::ios::binary);
-        if (!inFile.is_open()) return false;
+                    std::stringstream ss(header);
+                    std::string id, parentId, folderPathStr;
 
-        std::string fullContent((std::istreambuf_iterator<char>(inFile)),
-                                std::istreambuf_iterator<char>());
-        inFile.close();
+                    if (std::getline(ss, id, '|') && std::getline(ss, parentId, '|') &&
+                        std::getline(ss, folderPathStr)) {
+                        folderPathStr = ArtexEscaper::decodeContent(folderPathStr);
 
-        std::string folderToken = "$" + getTokenFormation("FOLDER") + "`";
-        std::string fileToken = "$" + getTokenFormation("FILE") + "`";
-
-        // Verifica se é um arquivo único ou pasta
-        bool isSingleFileMode = (fullContent.find(folderToken) == std::string::npos);
-
-        fs::path outputDir = artexPath.parent_path();
-        if (!isSingleFileMode) {
-            outputDir /= artexPath.stem(); // Para pastas, cria o diretório com o nome do projeto
-            fs::create_directories(outputDir);
-        }
-
-        const int larguraBarra = 20;
-
-        size_t totalBytes = fullContent.length();
-        size_t pos = 0;
-        size_t ultimoProgressoInt = 0; // Evita redesenhar a barra se a porcentagem não mudou
-
-        while (pos < totalBytes) {
-            // 1. Processa Pastas ($D`id|parent|caminho_relativo`)
-            if (!isSingleFileMode && fullContent.compare(pos, folderToken.length(), folderToken) == 0) {
-                pos += folderToken.length();
-                size_t endTag = fullContent.find('`', pos);
-                if (endTag == std::string::npos) break;
-
-                std::string header = fullContent.substr(pos, endTag - pos);
-                pos = endTag + 1;
-
-                std::stringstream ss(header);
-                std::string id, parentId, folderPathStr;
-
-                if (std::getline(ss, id, '|') && std::getline(ss, parentId, '|') && std::getline(ss, folderPathStr)) {
-                    folderPathStr = ArtexEscaper::decodeContent(folderPathStr);
-
-                    if (parentId != "-1" && !folderPathStr.empty()) {
-                        fs::path subFolderPath = outputDir / folderPathStr;
-                        fs::create_directories(subFolderPath);
+                        if (parentId != "-1" && !folderPathStr.empty()) {
+                            fs::path subFolderPath = outputDir / folderPathStr;
+                            fs::create_directories(subFolderPath);
+                        }
                     }
                 }
-            }
-            // 2. Processa Arquivos ($F`nome|tipo|conteudo|parent`)
-            else if (fullContent.compare(pos, fileToken.length(), fileToken) == 0) {
-                pos += fileToken.length();
-                size_t endTag = fullContent.find('`', pos);
-                if (endTag == std::string::npos) break;
+                // 2. Processa Arquivos ($F`nome|tipo|conteudo|parent`)
+                else if (fullContent.compare(pos, fileToken.length(), fileToken) == 0) {
+                    pos += fileToken.length();
+                    size_t endTag = fullContent.find('`', pos);
+                    if (endTag == std::string::npos) break;
 
-                std::string dataBlock = fullContent.substr(pos, endTag - pos);
-                pos = endTag + 1;
+                    std::string dataBlock = fullContent.substr(pos, endTag - pos);
+                    pos = endTag + 1;
 
-                size_t p1 = dataBlock.find('|');
-                size_t p2 = dataBlock.find('|', p1 + 1);
-                size_t p3 = dataBlock.rfind('|');
+                    size_t p1 = dataBlock.find('|');
+                    size_t p2 = dataBlock.find('|', p1 + 1);
+                    size_t p3 = dataBlock.rfind('|');
 
-                if (p1 != std::string::npos && p2 != std::string::npos && p3 != std::string::npos && p2 < p3) {
-                    std::string rawName = dataBlock.substr(0, p1);
-                    std::string rawType = dataBlock.substr(p1 + 1, p2 - p1 - 1);
-                    std::string rawContent = dataBlock.substr(p2 + 1, p3 - p2 - 1);
-                    std::string rawParent = dataBlock.substr(p3 + 1);
+                    if (p1 != std::string::npos && p2 != std::string::npos && p3 != std::string::npos && p2 < p3) {
+                        std::string rawName = dataBlock.substr(0, p1);
+                        std::string rawType = dataBlock.substr(p1 + 1, p2 - p1 - 1);
+                        std::string rawContent = dataBlock.substr(p2 + 1, p3 - p2 - 1);
+                        std::string rawParent = dataBlock.substr(p3 + 1);
 
-                    std::string realName = ArtexEscaper::decodeContent(rawName);
-                    std::string realType = ArtexEscaper::decodeContent(rawType);
-                    std::string realContent = ArtexEscaper::decodeContent(rawContent);
-                    std::string realParent = ArtexEscaper::decodeContent(rawParent);
+                        std::string realName = ArtexEscaper::decodeContent(rawName);
+                        std::string realType = ArtexEscaper::decodeContent(rawType);
+                        std::string realContent = ArtexEscaper::decodeContent(rawContent);
+                        std::string realParent = ArtexEscaper::decodeContent(rawParent);
 
-                    fs::path targetFolder = outputDir;
+                        fs::path targetFolder = outputDir;
 
-                    if (realParent != "SINGLE_FILE" && realParent != "root" && !realParent.empty()) {
-                        targetFolder = outputDir / realParent;
-                        fs::create_directories(targetFolder);
+                        if (realParent != "SINGLE_FILE" && realParent != "root" && !realParent.empty()) {
+                            targetFolder = outputDir / realParent;
+                            fs::create_directories(targetFolder);
+                        }
+
+                        fs::path filePath = targetFolder / (realType.empty() ? realName : (realName + "." + realType));
+
+                        std::ofstream outFile(filePath, std::ios::binary);
+                        if (outFile.is_open()) {
+                            outFile << realContent;
+                            outFile.close();
+                            // Nota: Removido o print antigo para não quebrar a barra visualmente
+                        }
                     }
+                } else {
+                    pos++;
+                }
 
-                    fs::path filePath = targetFolder / (realType.empty() ? realName : (realName + "." + realType));
+                // ==========================================
+                // CÁLCULO E EXIBIÇÃO DA BARRA DE PROGRESSO
+                // ==========================================
+                float progresso = static_cast<float>(pos) / totalBytes;
+                size_t progressoInt = static_cast<size_t>(progresso * 100);
 
-                    std::ofstream outFile(filePath, std::ios::binary);
-                    if (outFile.is_open()) {
-                        outFile << realContent;
-                        outFile.close();
-                        // Nota: Removido o print antigo para não quebrar a barra visualmente
+                // Só redesenha se a porcentagem mudou (melhora muito a performance)
+                if (progressoInt != ultimoProgressoInt || pos == totalBytes) {
+                    ultimoProgressoInt = progressoInt;
+                    int posicaoBarra = larguraBarra * progresso;
+
+                    std::cout << "\rDesempacotando: [";
+                    for (int j = 0; j < larguraBarra; ++j) {
+                        if (j < posicaoBarra) std::cout << "=";
+                        else if (j == posicaoBarra) std::cout << ">";
+                        else std::cout << " ";
                     }
+                    std::cout << "] " << progressoInt << "%";
+                    std::cout.flush();
                 }
-            } else {
-                pos++;
             }
 
-            // ==========================================
-            // CÁLCULO E EXIBIÇÃO DA BARRA DE PROGRESSO
-            // ==========================================
-            float progresso = static_cast<float>(pos) / totalBytes;
-            size_t progressoInt = static_cast<size_t>(progresso * 100);
-
-            // Só redesenha se a porcentagem mudou (melhora muito a performance)
-            if (progressoInt != ultimoProgressoInt || pos == totalBytes) {
-                ultimoProgressoInt = progressoInt;
-                int posicaoBarra = larguraBarra * progresso;
-
-                std::cout << "\rDesempacotando: [";
-                for (int j = 0; j < larguraBarra; ++j) {
-                    if (j < posicaoBarra) std::cout << "=";
-                    else if (j == posicaoBarra) std::cout << ">";
-                    else std::cout << " ";
-                }
-                std::cout << "] " << progressoInt << "%";
-                std::cout.flush();
-            }
+            std::cout << "\n[ARTEX] Concluido com sucesso!\n";
+            return true;
         }
-
-        std::cout << "\n[ARTEX] Concluido com sucesso!\n";
-        return true;
-    }
-};
-
-// ==========================================
-// JSONC PARSER (REMOVE COMENTÁRIOS)
-// ==========================================
-std::string parseJSONC(const std::string &filepath) {
-    std::ifstream file(filepath);
-    if (!file.is_open()) return "{}";
-
-    std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    std::string cleanJson;
-    cleanJson.reserve(source.size());
-
-    bool inString = false;
-    bool inSingleLineComment = false;
-    bool inMultiLineComment = false;
-
-    for (size_t i = 0; i < source.size(); ++i) {
-        char c = source[i];
-        char next = (i + 1 < source.size()) ? source[i + 1] : '\0';
-
-        if (inSingleLineComment) {
-            if (c == '\n') inSingleLineComment = false;
-            continue;
-        }
-
-        if (inMultiLineComment) {
-            if (c == '*' && next == '/') {
-                inMultiLineComment = false;
-                ++i;
-            }
-            continue;
-        }
-
-        if (!inString) {
-            if (c == '/' && next == '/') {
-                inSingleLineComment = true;
-                ++i;
-                continue;
-            }
-            if (c == '/' && next == '*') {
-                inMultiLineComment = true;
-                ++i;
-                continue;
-            }
-        }
-
-        if (c == '"' && (i == 0 || source[i - 1] != '\\')) {
-            inString = !inString;
-        }
-
-        cleanJson += c;
-    }
-
-    return cleanJson;
+    };
 }
 
 // ==========================================
@@ -632,14 +725,13 @@ class VersionManager {
 private:
     const std::string rootPath = "/artex";
     const std::string gitSavePath = "/artex/gitsave";
-    const std::string jsonSavesPath = "/artex/jsonsaves";
     const std::string versionsFile = "/artex/versions.txt";
-    const std::string configFile = "/artex/localfiles/ArtexBuild.jsonc";
+    const std::string configFile = "/artex/localfiles/ArtexBuild.ini";
+    const IniParser::IniData ArtexBuilderini = IniParser::LoadFromFile(configFile);
 
     void ensureDirectoriesExist() {
         fs::create_directories(rootPath);
         fs::create_directories(gitSavePath);
-        fs::create_directories(jsonSavesPath);
         fs::create_directories(rootPath + "/localfiles");
         fs::create_directories(rootPath + "/lastBackup");
 
@@ -670,18 +762,7 @@ private:
     }
 
     // Navega com segurança no JSONC até 'limitepackages' dentro de "coonfig file" -> "configs"
-    int getSnapshotLimit() {
-        std::string jsonContent = parseJSONC(configFile);
-        try {
-            json j = json::parse(jsonContent);
-            if (j.contains("config")) {
-                return j["config"].get<int>();
-            }
-        } catch (const std::exception &e) {
-            printf("[Artex] Erro ao ler limite de snapshots: %s. Usando padrão (5).\n", e.what());
-        }
-        return 5;
-    }
+    int getSnapshotLimit() { return IniParser::GetValue(ArtexBuilderini, "Build", "limitepackages", 10); }
 
     std::vector<std::string> getActiveVersions() {
         std::vector<std::string> versions;
@@ -709,15 +790,20 @@ public:
         std::string code = generateRandomCode(12);
         int limit = getSnapshotLimit();
 
+        printf("[Artex] Delete old files");
+        std::system("rm -rf /artex/gitsave/.config");
+        std::system("rm -rf /artex/gitsave/localfiles");
+
         printf("[Artex] Copy configs files configs");
         std::system("rm -rf /artex/gitsave/config");
         std::system("cp -r ~/.config /artex/gitsave/config");
 
         printf("[Artex] Copy localfiles (Artexbuild)\n");
-        std::string cpCmd = "cp -r " + rootPath + "/localfiles/* " + gitSavePath + "/ 2>/dev/null";
+        std::string cpCmd = "cp -r " + rootPath + "/localfiles/ " + gitSavePath + " /localfiles/ " + "/ 2>/dev/null";
         std::system(cpCmd.c_str());
 
         printf("[Artex] Update Last Backup...\n");
+        std::system("rm -rf /artex/lastBackup/*");
         std::string backupCmd = "cp -r " + gitSavePath + "/* " + rootPath + "/lastBackup/ 2>/dev/null";
         std::system(backupCmd.c_str());
 
@@ -725,37 +811,12 @@ public:
         std::string gitCmd = "cd " + gitSavePath + " && git add . && git commit -m '" + code + "'";
         int gitResult = std::system(gitCmd.c_str());
 
-        if (gitResult != 0) {
-            printf("[Warn] Commit no Git retornou status diferente de zero.\n");
-        }
-
-        // Lê a configuração atual para embutir na chave "jsons"
-        std::string jsonRaw = parseJSONC(configFile);
-        json parsedConfig;
-        try {
-            parsedConfig = json::parse(jsonRaw);
-        } catch (...) {
-            parsedConfig = json::object();
-        }
-
-        // Estrutura solicitada para o jsonsaves
-        json stateJson;
-        stateJson["code"] = code;
-        stateJson["custom_name"] = customName.empty() ? "idk" : customName;
-        stateJson["timestamp"] = std::time(nullptr);
-        stateJson["jsons"] = parsedConfig;
-
-        std::ofstream jsonFile(jsonSavesPath + "/" + code + ".json");
-        jsonFile << stateJson.dump(2);
-        jsonFile.close();
-
         // Gerencia rotação de snapshots
         auto versions = getActiveVersions();
         versions.push_back(code);
 
         if (limit != -1 && versions.size() > static_cast<size_t>(limit)) {
             std::string oldestCode = versions.front();
-            fs::remove(jsonSavesPath + "/" + oldestCode + ".json");
             versions.erase(versions.begin());
 
             printf("[Artex] Limite de snapshots (%d) atingido. Snapshot removido: %s\n", limit, oldestCode.c_str());
